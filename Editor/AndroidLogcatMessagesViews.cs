@@ -1,8 +1,8 @@
+#if PLATFORM_ANDROID
 using System;
 using System.IO;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEditor.Modules;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -163,9 +163,20 @@ namespace Unity.Android.Logcat
                 d.itemSize.x = Mathf.Max(4.0f, d.itemSize.x);
                 headerDrawn = true;
             }
-            
-            if (!headerDrawn || !lastHeaderDrawn)
-               GUI.Label(fullHeaderRect, GUIContent.none, AndroidLogcatStyles.columnHeader);
+
+            if (!headerDrawn)
+            {
+                // If no header drawn, draw a empty label to the full header rect.
+                GUI.Label(fullHeaderRect, GUIContent.none, AndroidLogcatStyles.columnHeader);
+            }
+            else if (!lastHeaderDrawn)
+            {
+                // If no last header drawn, draw an empty label to the remained header rect.
+                float x = offset - m_ScrollPosition.x;
+                var buttonRect = new Rect(x, fullHeaderRect.y, fullHeaderRect.width - x, fullHeaderRect.height);
+                GUI.Label(buttonRect, GUIContent.none, AndroidLogcatStyles.columnHeader);
+            }
+
             DoMouseEventsForHeaderToolbar(fullHeaderRect);
             return requestRepaint;
         }
@@ -215,12 +226,12 @@ namespace Unity.Android.Logcat
 
                         var enabled = Enumerable.Repeat(true, menuTexts.Count).ToArray();
                         var separator = new bool[menuTexts.Count];
-                        EditorUtility.DisplayCustomMenuWithSeparators(new Rect(e.mousePosition.x, e.mousePosition.y, 0, 0), 
-                            menuTexts.ToArray(), 
-                            enabled, 
-                            separator, 
-                            menuSelected.ToArray(), 
-                            MenuSelectionColumns, 
+                        EditorUtility.DisplayCustomMenuWithSeparators(new Rect(e.mousePosition.x, e.mousePosition.y, 0, 0),
+                            menuTexts.ToArray(),
+                            enabled,
+                            separator,
+                            menuSelected.ToArray(),
+                            MenuSelectionColumns,
                             null);
                         break;
                 }
@@ -231,8 +242,9 @@ namespace Unity.Android.Logcat
         {
             if (!m_Columns[(int)column].enabled)
                 return;
+            const float kMessageMargin = 5;
             var itemRect = m_Columns[(uint)column].itemSize;
-            var rc = new Rect(itemRect.x, fullView.y + AndroidLogcatStyles.kLogEntryFixedHeight * index, itemRect.width, itemRect.height);
+            var rc = new Rect(itemRect.x + kMessageMargin, fullView.y + AndroidLogcatStyles.kLogEntryFixedHeight * index, itemRect.width - kMessageMargin, itemRect.height);
             style.Draw(rc, new GUIContent(value), 0);
         }
 
@@ -254,7 +266,7 @@ namespace Unity.Android.Logcat
                 m_ScrollPosition.y = totalWindowRect.height;
 
             EditorGUI.BeginChangeCheck();
-            m_ScrollPosition = GUI.BeginScrollView(visibleWindowRect, m_ScrollPosition, totalWindowRect);
+            m_ScrollPosition = GUI.BeginScrollView(visibleWindowRect, m_ScrollPosition, totalWindowRect, true, false);
             int startItem = (int)(m_ScrollPosition.y / totalWindowRect.height * (kExtraMessageCount + m_LogEntries.Count));
 
             // Check if we need to enable autoscrolling
@@ -281,8 +293,15 @@ namespace Unity.Android.Logcat
                     var le = m_LogEntries[i];
                     if (selected)
                         AndroidLogcatStyles.background.Draw(selectionRect, false, false, true, false);
+                    else
+                    {
+                        if (i % 2 == 0)
+                            AndroidLogcatStyles.backgroundEven.Draw(selectionRect, false, false, false, false);
+                        else
+                            AndroidLogcatStyles.backgroundOdd.Draw(selectionRect, false, false, false, false);
+                    }
                     var style = AndroidLogcatStyles.priorityStyles[(int)le.priority];
-                    DoLogEntryItem(visibleWindowRect, i, Column.Time, le.dateTime.ToString(AndroidLogcat.LogEntry.kTimeFormat), style);
+                    DoLogEntryItem(visibleWindowRect, i, Column.Time, le.dateTime.ToString(AndroidLogcat.LogEntry.s_TimeFormat), style);
                     DoLogEntryItem(visibleWindowRect, i, Column.ProcessId, le.processId.ToString(), style);
                     DoLogEntryItem(visibleWindowRect, i, Column.ThreadId, le.threadId.ToString(), style);
                     DoLogEntryItem(visibleWindowRect, i, Column.Priority, le.priority.ToString(), style);
@@ -298,9 +317,42 @@ namespace Unity.Android.Logcat
                 }
             }
 
+            requestRepaint |= DoKeyEvents();
+
             GUI.EndScrollView();
 
+            Rect rc = GUILayoutUtility.GetLastRect();
+            // Decrement horizontal scrollbar height
+            rc.height -= 15.0f;
+            DoColumnBorders(rc, Color.black, 1);
+
             return requestRepaint;
+        }
+
+        private void DoColumnBorders(Rect visibleWindowRect, Color borderColor, float borderWidth)
+        {
+            if (Event.current.type != EventType.Repaint)
+                return;
+            var orgColor = GUI.color;
+            GUI.color = borderColor;
+            var prevColumnVisible = false;
+            foreach (var c in (Column[])Enum.GetValues(typeof(Column)))
+            {
+                if (prevColumnVisible)
+                {
+                    var itemRect = m_Columns[(uint)c].itemSize;
+                    var rc = new Rect(itemRect.x, visibleWindowRect.y, borderWidth, visibleWindowRect.height);
+                    GUI.DrawTexture(rc, EditorGUIUtility.whiteTexture);
+                }
+                prevColumnVisible = m_Columns[(int)c].enabled;
+            }
+
+            GUI.color = orgColor;
+        }
+
+        private static bool HasCtrlOrCmdModifier(Event e)
+        {
+            return (e.modifiers & (Application.platform == RuntimePlatform.OSXEditor ? EventModifiers.Command : EventModifiers.Control)) != 0;
         }
 
         private bool DoMouseEventsForLogEntry(Rect logEntryRect, int logEntryIndex, bool isLogEntrySelected)
@@ -312,7 +364,7 @@ namespace Unity.Android.Logcat
                 switch (e.button)
                 {
                     case 0:
-                        if ((e.modifiers & EventModifiers.Control) != 0)
+                        if (HasCtrlOrCmdModifier(e))
                         {
                             if (m_SelectedIndices.Contains(logEntryIndex))
                                 m_SelectedIndices.Remove(logEntryIndex);
@@ -381,19 +433,18 @@ namespace Unity.Android.Logcat
                         if (entries.Count > 0)
                         {
                             menuItems.Add("");
-                            menuItems.Add("Clear tags");
                             menuItems.Add("Add tag '" + entries[0].tag + "'");
                             menuItems.Add("Remove tag '" + entries[0].tag + "'");
                         }
 
                         var enabled = Enumerable.Repeat(true, menuItems.Count).ToArray();
                         var separator = new bool[menuItems.Count];
-                        EditorUtility.DisplayCustomMenuWithSeparators(new Rect(e.mousePosition.x, e.mousePosition.y, 0, 0), 
+                        EditorUtility.DisplayCustomMenuWithSeparators(new Rect(e.mousePosition.x, e.mousePosition.y, 0, 0),
                             menuItems.ToArray(),
                             enabled,
                             separator,
-                            null, 
-                            MenuSelection, 
+                            null,
+                            MenuSelection,
                             entries.ToArray());
                         break;
                 }
@@ -401,9 +452,98 @@ namespace Unity.Android.Logcat
             return requestRepaint;
         }
 
+        private bool DoKeyEvents()
+        {
+            var requestRepaint = false;
+            var e = Event.current;
+            if (e.type == EventType.KeyDown)
+            {
+                bool hasCtrlOrCmd = HasCtrlOrCmdModifier(e);
+                switch (e.keyCode)
+                {
+                    case KeyCode.A:
+                        if (hasCtrlOrCmd)
+                        {
+                            SelectAll();
+                            e.Use();
+                            requestRepaint = true;
+                        }
+                        break;
+                    case KeyCode.C:
+                        if (hasCtrlOrCmd)
+                        {
+                            var copyText = new StringBuilder();
+                            foreach (var si in m_SelectedIndices)
+                            {
+                                if (si >= m_LogEntries.Count)
+                                    continue;
+                                copyText.AppendLine(m_LogEntries[si].ToString());
+                            }
+                            EditorGUIUtility.systemCopyBuffer = copyText.ToString();
+                            e.Use();
+                        }
+                        break;
+                    case KeyCode.S:
+                        if (hasCtrlOrCmd)
+                        {
+                            var logEntries = new List<AndroidLogcat.LogEntry>();
+                            foreach (var si in m_SelectedIndices)
+                            {
+                                if (si > m_LogEntries.Count - 1)
+                                    continue;
+                                logEntries.Add(m_LogEntries[si]);
+                            }
+                            SaveToFile(logEntries.ToArray());
+                            e.Use();
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+
+            return requestRepaint;
+        }
+
         public bool DoMessageView()
         {
             return DoGUIHeader() | DoGUIEntries();
+        }
+
+        private void SelectAll()
+        {
+            m_SelectedIndices.Clear();
+            for (int si = 0; si < m_LogEntries.Count; si++)
+                m_SelectedIndices.Add(si);
+        }
+
+        private void SaveToFile(AndroidLogcat.LogEntry[] logEntries)
+        {
+            var contents = new StringBuilder();
+            foreach (var l in logEntries)
+            {
+                var entry = string.Empty;
+                for (int i = 0; i < m_Columns.Length; i++)
+                {
+                    if (!m_Columns[i].enabled)
+                        continue;
+                    if (entry.Length > 0)
+                        entry += " ";
+                    switch ((Column)i)
+                    {
+                        case Column.Time: entry += l.dateTime.ToString(AndroidLogcat.LogEntry.s_TimeFormat); break;
+                        case Column.ProcessId: entry += l.processId; break;
+                        case Column.ThreadId: entry += l.threadId; break;
+                        case Column.Priority: entry += l.priority; break;
+                        case Column.Tag: entry += l.tag; break;
+                        case Column.Message: entry += l.message; break;
+                    }
+                }
+                contents.AppendLine(entry);
+            }
+            var filePath = EditorUtility.SaveFilePanel("Save selected logs", "", PlayerSettings.applicationIdentifier + "-logcat", "txt");
+            if (!string.IsNullOrEmpty(filePath))
+                File.WriteAllText(filePath, contents.ToString());
         }
 
         private void MenuSelection(object userData, string[] options, int selected)
@@ -420,49 +560,18 @@ namespace Unity.Android.Logcat
                     break;
                 // Select All
                 case 1:
-                    m_SelectedIndices.Clear();
-                    for (int si = 0; si < m_LogEntries.Count; si++)
-                        m_SelectedIndices.Add(si);
+                    SelectAll();
                     break;
                 // Save to File
                 case 3:
-                    selectedLogEntries = (AndroidLogcat.LogEntry[])userData;
-                    var contents = new StringBuilder();
-                    foreach (var l in selectedLogEntries)
-                    {
-                        var entry = string.Empty;
-                        for (int i = 0; i < m_Columns.Length; i++)
-                        {
-                            if (!m_Columns[i].enabled)
-                                continue;
-                            if (entry.Length > 0)
-                                entry += " ";
-                            switch ((Column)i)
-                            {
-                                case Column.Time: entry += l.dateTime.ToString(AndroidLogcat.LogEntry.kTimeFormat); break;
-                                case Column.ProcessId: entry += l.processId; break;
-                                case Column.ThreadId: entry += l.threadId; break;
-                                case Column.Priority: entry += l.priority; break;
-                                case Column.Tag: entry += l.tag; break;
-                                case Column.Message: entry += l.message; break;
-                            }
-                        }
-                        contents.AppendLine(entry);
-                    }
-                    var filePath = EditorUtility.SaveFilePanel("Save selected logs", "", PlayerSettings.applicationIdentifier + "-logcat", "txt");
-                    if (!string.IsNullOrEmpty(filePath))
-                        File.WriteAllText(filePath, contents.ToString());
-                    break;
-                // Clear tags
-                case 5:
-                    ClearTags();
+                    SaveToFile((AndroidLogcat.LogEntry[])userData);
                     break;
                 // Add tag
-                case 6:
+                case 5:
                     AddTag(((AndroidLogcat.LogEntry[])userData)[0].tag);
                     break;
                 // Remove tag
-                case 7:
+                case 6:
                     RemoveTag(((AndroidLogcat.LogEntry[])userData)[0].tag);
                     break;
             }
@@ -477,3 +586,4 @@ namespace Unity.Android.Logcat
         }
     }
 }
+#endif

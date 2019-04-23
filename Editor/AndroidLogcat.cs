@@ -1,3 +1,4 @@
+#if PLATFORM_ANDROID
 using System.Collections.Generic;
 using System.Diagnostics;
 using System;
@@ -26,7 +27,9 @@ namespace Unity.Android.Logcat
 
         public struct LogEntry
         {
-            public const string kTimeFormat = "yyyy/MM/dd HH:mm:ss.fff";
+            public const string kTimeFormatWithYear = "yyyy/MM/dd HH:mm:ss.fff";
+            public const string kTimeFormatWithoutYear = "MM/dd HH:mm:ss.fff";
+            public static string s_TimeFormat = kTimeFormatWithYear;
             public LogEntry(string msg)
             {
                 message =  msg;
@@ -66,7 +69,15 @@ namespace Unity.Android.Logcat
             public string tag;
             public string message;
 
-            public override string ToString() => $"{dateTime.ToString(kTimeFormat)} {processId} {threadId} {priority} {tag}: {message}";
+            public override string ToString()
+            {
+                return string.Format("{0} {1} {2} {3} {4}: {5}", dateTime.ToString(s_TimeFormat), processId, threadId, priority, tag, message);
+            }
+
+            public static void SetTimeFormat(string timeFormat)
+            {
+                s_TimeFormat = timeFormat;
+            }
         }
 
         protected struct BuildInfo
@@ -78,16 +89,34 @@ namespace Unity.Android.Logcat
 
         private ADB adb;
 
-        public AndroidDevice Device { get; }
+        private readonly AndroidDevice m_Device;
+        private readonly int m_PackagePid;
+        private readonly int m_AndroidSDKVersion;
+        private readonly Priority m_MessagePriority;
+        private string m_Filter;
+        private readonly bool m_FilterIsRegex;
+        private Regex m_FilterRegex;
+        private readonly string[] m_Tags;
 
-        public int PackagePID { get; }
-        public bool PIDOptionAvailable { get; }
+        public AndroidDevice Device { get { return m_Device; } }
 
-        public Priority MessagePriority { get; }
+        public int PackagePid { get { return m_PackagePid; } }
 
-        public string Filter { get; }
+        // Check if it is Android 7 or above due to the below options are only available on these devices:
+        // 1) '--pid'
+        // 2) 'logcat -v year'
+        // 3) '--regex'
+        public bool IsAndroid7orAbove { get { return m_AndroidSDKVersion >= 24; } }
 
-        public string[] Tags { get; }
+        public Priority MessagePriority { get { return m_MessagePriority; } }
+
+        public string Filter { get { return m_Filter; }  set { m_Filter = value; } }
+
+        public bool FilterIsRegex { get { return m_FilterIsRegex; } }
+
+        public Regex FilterRegex { get { return m_FilterRegex; } }
+
+        public string[] Tags { get { return m_Tags; } }
 
         public event Action<List<LogEntry>> LogEntriesAdded;
 
@@ -119,15 +148,49 @@ namespace Unity.Android.Logcat
             }
         }
 
-        public AndroidLogcat(ADB adb, AndroidDevice device, int packagePID, Priority priority, string filter, bool filterIsRegex, string[] tags)
+        public AndroidLogcat(ADB adb, AndroidDevice device, int packagePid, Priority priority, string filter, bool filterIsRegex, string[] tags)
         {
             this.adb = adb;
-            this.Device = device;
-            this.PackagePID = packagePID;
-            this.PIDOptionAvailable = Int32.Parse(device.Properties["ro.build.version.sdk"]) >= 24; // --pid option is only available in Android 7 or above.
-            this.MessagePriority = priority;
-            this.Filter =  filterIsRegex  ? filter : Regex.Escape(filter);
-            this.Tags = tags;
+            this.m_Device = device;
+            this.m_PackagePid = packagePid;
+            this.m_AndroidSDKVersion = int.Parse(device.Properties["ro.build.version.sdk"]);
+            this.m_MessagePriority = priority;
+            this.m_FilterIsRegex = filterIsRegex;
+            InitFilterRegex(filter);
+            this.m_Tags = tags;
+
+            LogEntry.SetTimeFormat(IsAndroid7orAbove ? LogEntry.kTimeFormatWithYear : LogEntry.kTimeFormatWithoutYear);
+        }
+
+        private void InitFilterRegex(string filter)
+        {
+            if (string.IsNullOrEmpty(filter))
+                return;
+
+            if (IsAndroid7orAbove)
+            {
+                this.m_Filter = Regex.Escape(filter);
+                return;
+            }
+
+            if (!this.m_FilterIsRegex)
+            {
+                this.m_Filter = filter;
+                return;
+            }
+
+            try
+            {
+                this.m_Filter = Regex.Escape(filter);
+                m_FilterRegex = new Regex(m_Filter, RegexOptions.Compiled);
+            }
+            catch (Exception ex)
+            {
+                var error = string.Format("Input search filter '{0}' is not a valid regular expression.", Regex.Escape(m_Filter));
+                AndroidLogcatInternalLog.Log(error);
+
+                throw new ArgumentException(error, ex);
+            }
         }
 
         internal void Start()
@@ -141,23 +204,23 @@ namespace Unity.Android.Logcat
             m_LogcatProcess.BeginOutputReadLine();
             m_LogcatProcess.BeginErrorReadLine();
 
-            DeviceConnected?.Invoke(Device.Id);
+            if (DeviceConnected != null)
+                DeviceConnected.Invoke(Device.Id);
         }
 
         private string LogcatArguments()
         {
             var filterArg = string.Empty;
-            if (!string.IsNullOrEmpty(Filter))
+            if (IsAndroid7orAbove && !string.IsNullOrEmpty(Filter))
             {
-                filterArg = $@" --regex ""{Filter}""";
+                filterArg = "--regex \"" + Filter + "\"";
             }
 
-            var p = PriorityEnumToString(MessagePriority);
-            var tagLine = Tags.Length > 0 ? string.Join(" ", Tags.Select(m => m + ":" + p + " ").ToArray()) : $"*:{p} ";
-            if (PackagePID > 0 && PIDOptionAvailable)
-                return $"-s {Device.Id} logcat --pid={PackagePID} -s -v {LogPrintFormat} {tagLine}{filterArg}";
+            var priority = PriorityEnumToString(MessagePriority);
+            if (PackagePid > 0 && IsAndroid7orAbove)
+                return string.Format("-s {0} logcat --pid={1} -v {2} *:{3} {4}", Device.Id, PackagePid, LogPrintFormat, priority, filterArg);
 
-            return $"-s {Device.Id} logcat -s -v {LogPrintFormat} {tagLine}{filterArg}";
+            return string.Format("-s {0} logcat -v {1} *:{2} {3}", Device.Id, LogPrintFormat, priority, filterArg);
         }
 
         internal void Stop()
@@ -167,7 +230,7 @@ namespace Unity.Android.Logcat
             EditorApplication.update -= OnUpdate;
             if (m_LogcatProcess != null && !m_LogcatProcess.HasExited)
             {
-                AndroidLogcatInternalLog.Log($"Stopping logcat (process id {m_LogcatProcess.Id})");
+                AndroidLogcatInternalLog.Log("Stopping logcat (process id {0})", m_LogcatProcess.Id);
                 // NOTE: DONT CALL CLOSE, or ADB process will stay alive all the time
                 m_LogcatProcess.Kill();
             }
@@ -180,7 +243,7 @@ namespace Unity.Android.Logcat
             if (m_LogcatProcess != null)
                 throw new InvalidOperationException("Cannot clear logcat when logcat process is alive.");
 
-            AndroidLogcatInternalLog.Log($"{adb.GetADBPath()} -s {Device.Id} logcat -c");
+            AndroidLogcatInternalLog.Log("{0} -s {1} logcat -c", adb.GetADBPath(), Device.Id);
             var adbOutput = adb.Run(new[] { "-s", Device.Id, "logcat", "-c" }, "Failed to clear logcat.");
             AndroidLogcatInternalLog.Log(adbOutput);
         }
@@ -210,7 +273,8 @@ namespace Unity.Android.Logcat
             if (m_LogcatProcess.HasExited)
             {
                 Stop();
-                DeviceDisconnected?.Invoke(Device.Id);
+                if (DeviceDisconnected != null)
+                    DeviceDisconnected.Invoke(Device.Id);
 
                 return;
             }
@@ -221,17 +285,30 @@ namespace Unity.Android.Logcat
                 if (m_CachedLogLines.Count == 0)
                     return;
 
-                var needFilterByPID = PackagePID > 0 && !PIDOptionAvailable;
+                var needFilterByPid = !IsAndroid7orAbove && PackagePid > 0;
+                var needFilterByTags = Tags != null && Tags.Length > 0;
+                var needFilterBySearch = !IsAndroid7orAbove && !string.IsNullOrEmpty(Filter);
+                Regex regex = LogParseRegex;
                 foreach (var logLine in m_CachedLogLines)
                 {
-                    var m = m_LogCatEntryThreadTimeRegex.Match(logLine);
+                    var m = regex.Match(logLine);
                     if (!m.Success)
                     {
-                        entries.Add(LogEntryParserErrorFor(logLine));
+                        // The reason we need to check `needFilterByTags` is we don't really want to show the error logs that we can't parse if a tag is chosen.
+                        // For logs we can't parse, please refer to https://gitlab.cds.internal.unity3d.com/upm-packages/mobile/mobile-android-logcat/issues/44
+                        // And we should remove this check once #44 is fixed completely.
+                        if (!needFilterByTags)
+                            entries.Add(LogEntryParserErrorFor(logLine));
                         continue;
                     }
 
-                    if (needFilterByPID && Int32.Parse(m.Groups["pid"].Value) != PackagePID)
+                    if (needFilterByPid && Int32.Parse(m.Groups["pid"].Value) != PackagePid)
+                        continue;
+
+                    if (needFilterByTags && !MatchTagsFilter(m.Groups["tag"].Value))
+                        continue;
+
+                    if (needFilterBySearch && !MatchSearchFilter(m.Groups["msg"].Value))
                         continue;
 
                     entries.Add(ParseLogEntry(m));
@@ -251,6 +328,22 @@ namespace Unity.Android.Logcat
             return new LogEntry(msg);
         }
 
+        private bool MatchTagsFilter(string tagInMsg)
+        {
+            foreach (var tag in Tags)
+            {
+                if (tagInMsg.Contains(tag))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private bool MatchSearchFilter(string msg)
+        {
+            return FilterIsRegex ? FilterRegex.Match(msg).Success : msg.Contains(Filter);
+        }
+
         private LogEntry ParseLogEntry(Match m)
         {
             DateTime dateTime;
@@ -264,7 +357,7 @@ namespace Unity.Android.Logcat
                     break;
                 default:
                     throw new NotImplementedException("Please implement date parsing for log format: " + LogPrintFormat);
-            }   
+            }
             var entry = new LogEntry(
                 dateTime,
                 Int32.Parse(m.Groups["pid"].Value),
@@ -300,7 +393,7 @@ namespace Unity.Android.Logcat
                 case "F": return Priority.Fatal;
 
                 default:
-                    throw new InvalidOperationException($"Invalid `priority` ({priority}) in log entry.");
+                    throw new InvalidOperationException(string.Format("Invalid `priority` ({0}) in log entry.", priority));
             }
         }
 
@@ -478,25 +571,30 @@ namespace Unity.Android.Logcat
             }
         }
 
+        internal Regex LogParseRegex
+        {
+            get { return IsAndroid7orAbove ? m_LogCatEntryYearRegex : m_LogCatEntryThreadTimeRegex; }
+        }
+
         /// <summary>
         /// Returns log print format used with adb logcat -v LogPrintFormat
-        /// Note: Old android devices don't support all -v formats 
+        /// Note: Old android devices don't support all -v formats
         /// For ex., on Android 5.1.1 only these -v are available [brief process tag thread raw time threadtime long]
         /// While on Android 7.0, -v can have [brief color epoch long monotonic printable process raw tag thread threadtime time uid usec UTC year zone]
         /// </summary>
         internal string LogPrintFormat
         {
-            get { return kThreadTime; }
+            get { return IsAndroid7orAbove ? kYearTime : kThreadTime; }
         }
 
         private Dictionary<int, BuildInfo> m_BuildInfos = new Dictionary<int, BuildInfo>();
 
         internal static Regex m_CrashMessageRegex = new Regex(@"^\s*#\d{2}\s*pc\s([a-fA-F0-9]{8}).*(libunity\.so|libmain\.so)", RegexOptions.Compiled);
         // Regex for messages produced via 'adb logcat -s -v year *:V'
-        internal static Regex m_LogCatEntryYearRegex = new Regex(@"(?<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(?<pid>\d+)\s+(?<tid>\d+)\s+(?<priority>[VDIWEFS])\s+(?<tag>[^:\s]+)?\s*:\s(?<msg>.*)", RegexOptions.Compiled);
+        internal static Regex m_LogCatEntryYearRegex = new Regex(@"(?<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(?<pid>\d+)\s+(?<tid>\d+)\s+(?<priority>[VDIWEFS])\s+(?<tag>\S+)\s*:\s+(?<msg>.*)", RegexOptions.Compiled);
 
         // Regex for messages produced via 'adb logcat -s -v threadtime *:V'
-        internal static Regex m_LogCatEntryThreadTimeRegex = new Regex(@"(?<date>\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(?<pid>\d+)\s+(?<tid>\d+)\s+(?<priority>[VDIWEFS])\s+(?<tag>[^:\s]+)?\s*:\s(?<msg>.*)", RegexOptions.Compiled);
+        internal static Regex m_LogCatEntryThreadTimeRegex = new Regex(@"(?<date>\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(?<pid>\d+)\s+(?<tid>\d+)\s+(?<priority>[VDIWEFS])\s+(?<tag>\S+)\s*:\s+(?<msg>.*)", RegexOptions.Compiled);
 
 
         internal static readonly int kUnityHashCode = "Unity".GetHashCode();
@@ -508,3 +606,4 @@ namespace Unity.Android.Logcat
         internal const string kYearTime = "year";
     }
 }
+#endif

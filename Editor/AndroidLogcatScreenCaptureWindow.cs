@@ -1,8 +1,6 @@
+#if PLATFORM_ANDROID
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text;
 using UnityEngine;
 using UnityEditor;
 
@@ -13,8 +11,9 @@ namespace Unity.Android.Logcat
         private string m_ImagePath;
         private Texture2D m_ImageTexture = null;
         bool didLoad = false;
-        private const int buttonAreaHeight = 30;
-        private const int saveButtonWidth = 60;
+        private const int kButtonAreaHeight = 30;
+        private const int kSaveButtonWidth = 60;
+        private const int kBottomAreaHeight = 8;
 
         public static void Show(string imagePath)
         {
@@ -39,7 +38,7 @@ namespace Unity.Android.Logcat
 
             EditorGUILayout.BeginHorizontal();
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Save...", GUILayout.Width(saveButtonWidth)))
+            if (GUILayout.Button("Save...", GUILayout.Width(kSaveButtonWidth)))
             {
                 var path = EditorUtility.SaveFilePanel("Save Screen Capture", "", Path.GetFileName(m_ImagePath), "png");
                 if (!string.IsNullOrEmpty(path))
@@ -50,7 +49,7 @@ namespace Unity.Android.Logcat
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogError($"Failed to save to '{path}' as '{ex.Message}'.");
+                        Debug.LogErrorFormat("Failed to save to '{0}' as '{1}'.", path, ex.Message);
                     }
                 }
             }
@@ -60,7 +59,7 @@ namespace Unity.Android.Logcat
             GUILayout.Space(10);
             if (m_ImageTexture != null)
             {
-                Rect rect = new Rect(0, buttonAreaHeight, position.width, position.height);
+                Rect rect = new Rect(0, kButtonAreaHeight, position.width, position.height - kButtonAreaHeight - kBottomAreaHeight);
                 GUI.DrawTexture(rect, m_ImageTexture, ScaleMode.ScaleToFit);
             }
             EditorGUILayout.EndVertical();
@@ -78,7 +77,8 @@ namespace Unity.Android.Logcat
             if (!m_ImageTexture.LoadImage(imageData))
                 return;
 
-            maxSize = new Vector2(Math.Max(m_ImageTexture.width, position.width), m_ImageTexture.height + buttonAreaHeight);
+            maxSize = new Vector2(Math.Max(m_ImageTexture.width, position.width), m_ImageTexture.height + kButtonAreaHeight);
         }
     }
 }
+#endif

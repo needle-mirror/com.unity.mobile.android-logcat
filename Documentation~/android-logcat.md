@@ -50,6 +50,8 @@ Connecting devices through USB and Wifi are both supported.
 The devices connected through USB will be added to the device list automatically when starting Android logcat window. 
 
 **Connect via Wifi**  
+Before connecting, please follow the instructions in the [Android ADB Document](https://developer.android.com/studio/command-line/adb#wireless) to switch your device to TCP mode. 
+
 Go to the devices list and click **\<Enter IP>** as below.  
 ![Connect via Wifi](images/connect_via_wifi.png)
 
@@ -93,6 +95,11 @@ You can input text in the text field on the toolbar to search logs by text. You 
 	2. Right click on the message and select **Add Tag** or **Remove Tag**.  
 	![Tag Control](images/tag_control.png)
 
+  You can also open the tag control window to manipulate tags by following steps:
+  	1. Click the **Tag** column to show the menu.
+	2. Click **Tag Control** menu item to show the **Tag Control Window**.  
+	!![Tag Control Window](images/tag_control_window.png)
+
 ### Screen Capture
 You can use **Capture Screen** button on the toolbar to capture a screenshot of the selected device. You can also **Save** the screenshot as file.  
 ![Device Screen Capture](images/device_screen_capture.png)
@@ -118,6 +125,8 @@ To use this feature, you need to
 ## **Document Revision History**
 |Date|Reason|
 |---|---|
+|Apr 01, 2019|Document Updated. Matches package version 0.2.5.|
+|Jan 22, 2019|Document Updated. Matches package version 0.2.1.|
 |Nov 16, 2018|Document Updated. Matches package version 0.1.3.|
 |Oct 30, 2018|Document Updated. Matches package version 0.1.2.|
 |Oct 23, 2018|Document created. Matches package version 0.1.1.|
