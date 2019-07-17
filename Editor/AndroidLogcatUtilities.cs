@@ -103,17 +103,15 @@ namespace Unity.Android.Logcat
         /// <summary>
         /// Return the pid of the given package on the given device.
         /// </summary>
-        public static int GetPidFromPackageName(ADB adb, AndroidDevice device, string deviceId, string packageName)
+        public static int GetPidFromPackageName(ADB adb, AndroidLogcatDevice device, string deviceId, string packageName)
         {
             if (string.IsNullOrEmpty(deviceId))
                 return -1;
 
             try
             {
-                var pidofOptionAvailable = Int32.Parse(device.Properties["ro.build.version.sdk"]) >= 24; // pidof option is only available in Android 7 or above.
-
                 string cmd = null;
-                if (pidofOptionAvailable)
+                if (device.SupportsFilteringByPid)
                     cmd = string.Format("-s {0} shell pidof -s {1}", deviceId, packageName);
                 else
                     cmd = string.Format("-s {0} shell ps", deviceId);
@@ -123,7 +121,7 @@ namespace Unity.Android.Logcat
                 if (string.IsNullOrEmpty(output))
                     return -1;
 
-                if (pidofOptionAvailable)
+                if (device.SupportsFilteringByPid)
                 {
                     AndroidLogcatInternalLog.Log(output);
                     return int.Parse(output);
@@ -139,41 +137,20 @@ namespace Unity.Android.Logcat
         }
 
         /// <summary>
-        /// Return a list of the connected devices.
-        /// </summary>
-        public static List<string> RetrieveConnectedDeviceIds(ADB adb)
-        {
-            var deviceIds = new List<string>();
-
-            AndroidLogcatInternalLog.Log("{0} devices", adb.GetADBPath());
-            var adbOutput = adb.Run(new[] { "devices" }, "Unable to list connected devices. ");
-            foreach (var line in adbOutput.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(line => line.Trim()))
-            {
-                AndroidLogcatInternalLog.Log(" " + line);
-                if (line.EndsWith("device"))
-                {
-                    var deviceId = line.Substring(0, line.IndexOf('\t'));
-                    deviceIds.Add(deviceId);
-                }
-            }
-
-            return deviceIds;
-        }
-
-        /// <summary>
         /// Return the detail info of the given device.
         /// </summary>
-        public static string RetrieveDeviceDetails(AndroidDevice device, string deviceId)
+        public static string RetrieveDeviceDetails(AndroidLogcatDevice device, string deviceId)
         {
             if (device == null)
                 return deviceId;
 
-            var manufacturer = device.Properties["ro.product.manufacturer"];
-            var model = device.Properties["ro.product.model"];
-            var release = device.Properties["ro.build.version.release"];
-            var sdkVersion = device.Properties["ro.build.version.sdk"];
+            var manufacturer = device.Manufacturer;
+            var model = device.Model;
+            var release = device.OSVersion;
+            var sdkVersion = device.APILevel;
+            var abi = device.ABI;
 
-            return string.Format("{0} {1} (version: {2}, sdk: {3}, id: {4})", manufacturer, model, release, sdkVersion, deviceId);
+            return string.Format("{0} {1} (version: {2}, abi: {3}, sdk: {4}, id: {5})", manufacturer, model, release, abi, sdkVersion, deviceId);
         }
 
         public static int ParsePidInfo(string packageName, string commandOutput)
@@ -240,6 +217,21 @@ namespace Unity.Android.Logcat
 
             packageName = match.Groups["package"].Value;
             return int.Parse(match.Groups["pid"].Value);
+        }
+
+        public static void OpenTerminal(string workingDirectory)
+        {
+            switch (Application.platform)
+            {
+                case RuntimePlatform.WindowsEditor:
+                    System.Diagnostics.Process.Start("cmd.exe", string.Format("/K \"cd {0}\"", workingDirectory));
+                    break;
+                case RuntimePlatform.OSXEditor:
+                    System.Diagnostics.Process.Start(@"/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal", workingDirectory);
+                    break;
+                default:
+                    throw new Exception("Don't know how to open terminal on " + Application.platform.ToString());
+            }
         }
     }
 
