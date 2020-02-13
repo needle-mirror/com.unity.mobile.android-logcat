@@ -132,9 +132,6 @@ namespace Unity.Android.Logcat
         void OnDestroy()
         {
             SaveStates();
-
-            if (m_TagControl.TagWindow != null)
-                m_TagControl.TagWindow.Close();
         }
 
         internal void SaveStates()
@@ -245,14 +242,6 @@ namespace Unity.Android.Logcat
         {
             if (m_Runtime.Settings != null)
                 m_Runtime.Settings.OnSettingsChanged -= OnSettingsChanged;
-            if (m_TagControl.TagWindow != null)
-            {
-                // Note: For some reason m_TagControl.TagWindow.Close doesn't work correctly during domain reload
-                var tagWindow = GetWindow<AndroidLogcatTagWindow>();
-                if (tagWindow != null)
-                    tagWindow.Close();
-                m_TagControl.TagWindow = null;
-            }
 
             StopLogCat();
             m_Runtime.OnUpdate -= Update;
@@ -304,6 +293,25 @@ namespace Unity.Android.Logcat
         private void TagSelectionChanged()
         {
             RestartLogCat();
+        }
+
+        private void FilterByProcessId(int processId)
+        {
+            var packages = m_PackagesForAllDevices[m_SelectedDeviceId];
+            foreach (var p in packages)
+            {
+                if (p.processId == processId)
+                {
+                    SelectPackage(p);
+                    return;
+                }
+            }
+
+            var packageName = AndroidLogcatUtilities.GetPackageNameFromPid(m_Adb, m_SelectedDeviceId, processId);
+
+            var package = CreatePackageInformation(packageName, processId, m_SelectedDeviceId);
+
+            SelectPackage(package);
         }
 
         private void Update()
@@ -948,7 +956,7 @@ namespace Unity.Android.Logcat
         internal void OnGUI()
         {
         #if !PLATFORM_ANDROID
-            EditorGUILayout.HelpBox("Please switch active platform to be Android in Build Settings Window.", MessageType.Info);
+            AndroidLogcatUtilities.ShowActivePlatformNotAndroidMessage();
         #endif
         }
 
