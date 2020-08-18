@@ -18,6 +18,15 @@ namespace Unity.Android.Logcat
     {
         internal static string kSettingsName = "AndroidLogcatSettings";
 
+        // Since querying memory from device is a lengthy operation, here's a cap 500 ms, setting it too low  will make memory request to be delayed
+        internal static int kMinMemoryRequestIntervalMS = 500;
+
+        internal static readonly string[] kAddressResolveRegex =
+        {
+            @"\s*#\d{2}\s*pc\s(?<address>[a-fA-F0-9]+).*(?<libName>lib.*)\.so",
+            @".*at (?<libName>lib.*)\.0x(?<address>[a-fA-F0-9]+)\(Native Method\)"
+        };
+
         [SerializeField]
         private int m_MemoryRequestInterval;
 
@@ -36,15 +45,18 @@ namespace Unity.Android.Logcat
         [SerializeField]
         private List<Color> m_MessageColorsFreeSkin;
 
-        // Warning: Setting this number to low, will make memory request to be delayed
-        // Since querying memory from device is a lengthy operation. That's why there's a cap 500
+        [SerializeField] private ColumnData[] m_ColumnData;
+
+        [SerializeField]
+        private List<ReordableListItem> m_StacktraceResolveRegex;
+
         internal int MemoryRequestIntervalMS
         {
             set
             {
                 int correctedValue = value;
-                if (correctedValue < 500)
-                    correctedValue = 500;
+                if (correctedValue < kMinMemoryRequestIntervalMS)
+                    correctedValue = kMinMemoryRequestIntervalMS;
                 if (m_MemoryRequestInterval == correctedValue)
                     return;
                 m_MemoryRequestInterval = correctedValue;
@@ -123,9 +135,20 @@ namespace Unity.Android.Logcat
             return GetDefaultColor(priority, EditorGUIUtility.isProSkin);
         }
 
+        internal ColumnData[] ColumnData
+        {
+            get
+            {
+                return m_ColumnData;
+            }
+        }
+
+
+        internal List<ReordableListItem> StacktraceResolveRegex => m_StacktraceResolveRegex;
+
         internal Action<AndroidLogcatSettings> OnSettingsChanged;
 
-        private AndroidLogcatSettings()
+        internal AndroidLogcatSettings()
         {
             Reset();
         }
@@ -134,7 +157,7 @@ namespace Unity.Android.Logcat
         {
             m_MemoryRequestInterval = 500;
             m_MaxMessageCount = 60000;
-            m_MessageFont = (Font)EditorGUIUtility.LoadRequired(UnityEditor.Experimental.EditorResources.fontsPath + "consola.ttf");
+            m_MessageFont = AssetDatabase.LoadAssetAtPath<Font>("Packages/com.unity.mobile.android-logcat/Editor/Resources/consola.ttf");
             m_MessageFontSize = 11;
             if (Enum.GetValues(typeof(AndroidLogcat.Priority)).Length != 6)
                 throw new Exception("Unexpected length of Priority enum.");
@@ -146,7 +169,44 @@ namespace Unity.Android.Logcat
                 m_MessageColorsProSkin.Add(GetDefaultColor(p, true));
                 m_MessageColorsFreeSkin.Add(GetDefaultColor(p, false));
             }
+
+            m_ColumnData = GetColumns();
+
+            ResetStacktraceResolveRegex();
+
             InvokeOnSettingsChanged();
+        }
+
+        internal void ResetStacktraceResolveRegex()
+        {
+            // Note: Don't create new instance, if not necessary
+            // Since some classes might be using it
+            if (m_StacktraceResolveRegex == null)
+                m_StacktraceResolveRegex = new List<ReordableListItem>();
+            m_StacktraceResolveRegex.Clear();
+            foreach (var r in kAddressResolveRegex)
+            {
+                m_StacktraceResolveRegex.Add(new ReordableListItem() { Name = r, Enabled = true });
+            }
+        }
+
+        private static ColumnData[] GetColumns()
+        {
+            var columns = new ColumnData[]
+            {
+                new ColumnData() {content = new GUIContent(""), width = 30.0f },
+                new ColumnData() {content = EditorGUIUtility.TrTextContent("Time", "Time when event occured"), width = 160.0f },
+                new ColumnData() {content = EditorGUIUtility.TrTextContent("Pid", "Process Id"), width = 50.0f  },
+                new ColumnData() {content = EditorGUIUtility.TrTextContent("Tid", "Thread Id"), width = 50.0f  },
+                new ColumnData() {content = EditorGUIUtility.TrTextContent("Priority", "Priority (Left click to select different priorities)"), width = 50.0f  },
+                new ColumnData() {content = EditorGUIUtility.TrTextContent("Tag", "Tag (Left click to select different tags)"), width = 50.0f  },
+                new ColumnData() {content = EditorGUIUtility.TrTextContent("Message", ""), width = -1  },
+            };
+
+            var expectedColumnLength = Enum.GetValues(typeof(AndroidLogcatConsoleWindow.Column)).Length;
+            if (columns.Length != expectedColumnLength)
+                throw new Exception($"Expected {expectedColumnLength} columns, but had {columns.Length}");
+            return columns;
         }
 
         private Color GetDefaultColor(AndroidLogcat.Priority priority, bool isProSkin)
@@ -187,6 +247,13 @@ namespace Unity.Android.Logcat
             OnSettingsChanged(this);
         }
 
+        private void Validate()
+        {
+            var defaultColumnData = GetColumns();
+            if (m_ColumnData == null || m_ColumnData.Length != defaultColumnData.Length)
+                m_ColumnData = defaultColumnData;
+        }
+
         internal static AndroidLogcatSettings Load()
         {
             var settings = new AndroidLogcatSettings();
@@ -198,6 +265,7 @@ namespace Unity.Android.Logcat
             try
             {
                 EditorJsonUtility.FromJsonOverwrite(data, settings);
+                settings.Validate();
             }
             catch (Exception ex)
             {
@@ -213,52 +281,6 @@ namespace Unity.Android.Logcat
 
             var data = EditorJsonUtility.ToJson(settings);
             EditorPrefs.SetString(kSettingsName, data);
-        }
-    }
-
-    class AndroidLogcatSettingsProvider : SettingsProvider
-    {
-        class Styles
-        {
-            public static GUIContent maxMessageCount = new GUIContent("Max Count", "The maximum number of messages.");
-            public static GUIContent font = new GUIContent("Font", "Font used for displaying messages");
-            public static GUIContent fontSize = new GUIContent("Font Size");
-        }
-
-        public AndroidLogcatSettingsProvider(string path, SettingsScope scope)
-            : base(path, scope) {}
-
-        public override void OnGUI(string searchContext)
-        {
-            var settings = AndroidLogcatManager.instance.Runtime.Settings;
-            EditorGUILayout.LabelField("Messages", EditorStyles.boldLabel);
-            settings.MaxMessageCount = EditorGUILayout.IntSlider(Styles.maxMessageCount, settings.MaxMessageCount, 1, 100000);
-            settings.MessageFont = (Font)EditorGUILayout.ObjectField(Styles.font, settings.MessageFont, typeof(Font), true);
-            settings.MessageFontSize = EditorGUILayout.IntSlider(Styles.fontSize, settings.MessageFontSize, 5, 25);
-
-            GUILayout.Space(20);
-            EditorGUILayout.LabelField("Message Colors", EditorStyles.boldLabel);
-            foreach (var p in (AndroidLogcat.Priority[])Enum.GetValues(typeof(AndroidLogcat.Priority)))
-            {
-                settings.SetMessageColor(p, EditorGUILayout.ColorField(p.ToString(), settings.GetMessageColor(p)));
-            }
-
-            EditorGUILayout.LabelField("Memory Window", EditorStyles.boldLabel);
-            settings.MemoryRequestIntervalMS = EditorGUILayout.IntField("Request Interval ms", settings.MemoryRequestIntervalMS);
-            GUILayout.Space(20);
-            GUILayout.BeginHorizontal();
-            GUILayout.FlexibleSpace();
-            if (GUILayout.Button("Reset"))
-                settings.Reset();
-            GUILayout.Space(5);
-            GUILayout.EndHorizontal();
-        }
-
-        [SettingsProvider]
-        public static SettingsProvider CreateMyCustomSettingsProvider()
-        {
-            var provider = new AndroidLogcatSettingsProvider("Preferences/Analysis/Android Logcat Settings", SettingsScope.User);
-            return provider;
         }
     }
 }

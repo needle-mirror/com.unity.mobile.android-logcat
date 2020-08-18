@@ -31,10 +31,10 @@ namespace Unity.Android.Logcat
         private AutoResetEvent m_FinishedEvent = new AutoResetEvent(false);
         private volatile bool m_Running;
         private static Thread s_MainThread;
-        private IAndroidLogcatRuntime m_Runtime;
+        private AndroidLogcatRuntimeBase m_Runtime;
         private int m_AsyncOperationsExecuted;
 
-        internal AndroidLogcatDispatcher(IAndroidLogcatRuntime runtime)
+        internal AndroidLogcatDispatcher(AndroidLogcatRuntimeBase runtime)
         {
             m_Runtime = runtime;
             m_AsyncOperationsExecuted = 0;
@@ -89,7 +89,7 @@ namespace Unity.Android.Logcat
 
         /// <summary>
         /// Worker thread for async operations.
-        /// Note: If there's an exception, very bad happen which don't get reported anywhere, this is way we're try/catching async operation invoke
+        /// Note: If there's an exception, very bad things happen which don't get reported anywhere, this is why we're try/catching async operation invoke
         /// </summary>
         /// <param name="o"></param>
         private void WorkerThread(object o)

@@ -24,16 +24,26 @@ namespace Unity.Android.Logcat
             var binPath = Paths.Combine(m_NDKDirectory, "toolchains", "llvm", "prebuilt", platformTag, "bin");
             m_NMPath = Path.Combine(binPath, "llvm-nm");
 #else
-            m_NDKDirectory = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(UnityEditor.Android.ADB.GetInstance().GetADBPath()), @"..\..\NDK"));
-            if (!Directory.Exists(m_NDKDirectory))
+            var directoriesToChecks = new[]
             {
-                m_NDKDirectory = EditorPrefs.GetString("AndroidNdkRootR16b");
-                if (!Directory.Exists(m_NDKDirectory))
-                {
-                    m_NDKDirectory = string.Empty;
-                    throw new System.Exception("Failed to locate NDK directory");
-                }
+                Path.GetFullPath(Path.Combine(Path.GetDirectoryName(UnityEditor.Android.ADB.GetInstance().GetADBPath()), @"..\..\NDK")),
+                EditorPrefs.GetString("AndroidNdkRootR16b"),
+                System.Environment.GetEnvironmentVariable("ANDROID_NDK_ROOT")
+            };
+
+            m_NDKDirectory = string.Empty;
+            foreach (var d in directoriesToChecks)
+            {
+                if (string.IsNullOrEmpty(d))
+                    continue;
+                if (!Directory.Exists(d))
+                    continue;
+                m_NDKDirectory = d;
+                break;
             }
+
+            if (string.IsNullOrEmpty(m_NDKDirectory))
+                throw new System.Exception("Failed to locate NDK directory");
 
             var binPath = Paths.Combine(m_NDKDirectory, "toolchains", "aarch64-linux-android-4.9", "prebuilt", platformTag, "bin");
             m_NMPath = Path.Combine(binPath, "aarch64-linux-android-nm");
@@ -66,9 +76,11 @@ namespace Unity.Android.Logcat
 
         internal string[] RunAddr2Line(string symbolFilePath, string[] addresses)
         {
+            // https://sourceware.org/binutils/docs/binutils/addr2line.html
+            var args = "-C -f -p -e \"" + symbolFilePath + "\" " + string.Join(" ", addresses.ToArray());
+            AndroidLogcatInternalLog.Log($"\"{m_Addr2LinePath}\" {args}");
             var result = Shell.RunProcess(
-                m_Addr2LinePath,
-                "-C -f -p -e \"" + symbolFilePath + "\" " + string.Join(" ", addresses.ToArray()));
+                m_Addr2LinePath, args);
             ValidateResult(result);
             return result.GetStandardOut().Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
         }

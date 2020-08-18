@@ -217,30 +217,44 @@ namespace Unity.Android.Logcat
             string line = null;
             using (var sr = new StringReader(commandOutput))
             {
-                while ((line = sr.ReadLine()) != null)
+                do
                 {
-                    if (line.Contains("top-activity"))
-                        break;
+                    while ((line = sr.ReadLine()) != null)
+                    {
+                        if (line.Contains("top-activity") ||        // Top Activity when device is not locked
+                            line.Contains("top-sleeping"))          // Top Activity when device is locked
+                            break;
+                    }
+
+                    if (string.IsNullOrEmpty(line))
+                    {
+                        AndroidLogcatInternalLog.Log("Cannot find top activity.");
+                        return -1;
+                    }
+
+                    AndroidLogcatInternalLog.Log(line);
+
+                    var reg = new Regex(@"(?<pid>\d+)\:(?<package>\S+)\/\S+\s+\(top-\S+\)");
+                    var match = reg.Match(line);
+                    if (!match.Success)
+                    {
+                        AndroidLogcatInternalLog.Log("Match '{0}' failed.", line);
+                        return -1;
+                    }
+
+                    int pid = int.Parse(match.Groups["pid"].Value);
+
+                    // There can be lines with (top-activity) at the end, but pid == 0, not sure what are those, but definetly not top activities
+                    if (pid > 0)
+                    {
+                        packageName = match.Groups["package"].Value;
+                        return pid;
+                    }
+
+                    // Continue looking for top activity
                 }
+                while (true);
             }
-
-            if (string.IsNullOrEmpty(line))
-            {
-                AndroidLogcatInternalLog.Log("Cannot find top activity.");
-                return -1;
-            }
-            AndroidLogcatInternalLog.Log(line);
-
-            var reg = new Regex(@"(?<pid>\d{2,})\:(?<package>[^/]*)");
-            var match = reg.Match(line);
-            if (!match.Success)
-            {
-                AndroidLogcatInternalLog.Log("Match '{0}' failed.", line);
-                return -1;
-            }
-
-            packageName = match.Groups["package"].Value;
-            return int.Parse(match.Groups["pid"].Value);
         }
 
         public static void OpenTerminal(string workingDirectory)
@@ -345,7 +359,7 @@ namespace Unity.Android.Logcat
         /// <param name="symbolPath"></param>
         /// <param name="libraryFile"></param>
         /// <returns></returns>
-        public static string GetSymbolFile(string symbolPath, string libraryFile)
+        internal static string GetSymbolFile(string symbolPath, string libraryFile)
         {
             var fullPath = Path.Combine(symbolPath, libraryFile);
             if (File.Exists(fullPath))
@@ -360,23 +374,44 @@ namespace Unity.Android.Logcat
                     return fullPath;
             }
 
-            return null;
+            return string.Empty;
         }
-    }
 
-    internal class AndroidLogcatJsonSerialization
-    {
-        public string m_SelectedDeviceId = String.Empty;
+        internal static string GetSymbolFile(IReadOnlyList<ReordableListItem> symbolPaths, string libraryFile)
+        {
+            foreach (var symbolPath in symbolPaths)
+            {
+                if (!symbolPath.Enabled)
+                    continue;
 
-        public AndroidLogcatConsoleWindow.PackageInformation m_SelectedPackage = null;
+                var file = GetSymbolFile(symbolPath.Name, libraryFile);
+                if (!string.IsNullOrEmpty(file))
+                    return file;
+            }
 
-        public AndroidLogcat.Priority m_SelectedPriority = AndroidLogcat.Priority.Verbose;
+            return string.Empty;
+        }
 
-        public List<AndroidLogcatConsoleWindow.PackageInformation> m_PackagesForSerialization = null;
+        internal static bool ParseCrashLine(IReadOnlyList<ReordableListItem> regexs, string msg, out string address, out string libName)
+        {
+            foreach (var regexItem in regexs)
+            {
+                if (!regexItem.Enabled)
+                    continue;
 
-        public AndroidLogcatTagsControl m_TagControl = null;
+                var match = new Regex(regexItem.Name).Match(msg);
+                if (match.Success)
+                {
+                    address = match.Groups["address"].Value;
+                    libName = match.Groups["libName"].Value + ".so";
+                    return true;
+                }
+            }
 
-        public string m_MemoryViewerJson;
+            address = null;
+            libName = null;
+            return false;
+        }
     }
 }
 #else
