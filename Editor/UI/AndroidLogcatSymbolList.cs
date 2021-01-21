@@ -1,4 +1,3 @@
-#if PLATFORM_ANDROID
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
@@ -17,7 +16,7 @@ namespace Unity.Android.Logcat
         {
             var backends = new[] {"mono", "il2cpp"};
             var buildTypes = new[] {"Debug", "Development", "Release"};
-            var cpu = new[] {"armeabi-v7a", "arm64-v8a"};
+            var cpu = new[] {"", "armeabi-v7a", "arm64-v8a"};
             var names = new List<GUIContent>();
             var paths = new List<string>();
 
@@ -29,11 +28,19 @@ namespace Unity.Android.Logcat
                 {
                     foreach (var c in cpu)
                     {
-                        var path = Path.GetFullPath(Paths.Combine(engineDirectory, "Variations", b, t, "Symbols", c));
+                        var path = Path.GetFullPath(Paths.Combine(engineDirectory, "Variations", b, t, "Symbols"));
+                        if (!string.IsNullOrEmpty(c))
+                            path = Path.Combine(path, c);
+
                         if (!Directory.Exists(path))
                             continue;
 
-                        names.Add(new GUIContent($"{Application.unityVersion}/{b}/{t}/{c}"));
+                        var name = $"{Application.unityVersion}/{b}/{t}";
+                        if (string.IsNullOrEmpty(c))
+                            name += "/.";
+                        else
+                            name += $"/{c}";
+                        names.Add(new GUIContent(name));
                         paths.Add(path);
                     }
                 }
@@ -76,4 +83,3 @@ namespace Unity.Android.Logcat
         }
     }
 }
-#endif

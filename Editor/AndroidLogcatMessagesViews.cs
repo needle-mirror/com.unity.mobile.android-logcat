@@ -1,4 +1,3 @@
-#if PLATFORM_ANDROID
 using System;
 using System.IO;
 using System.Collections.Generic;
@@ -115,13 +114,13 @@ namespace Unity.Android.Logcat
                             if (GUI.Button(buttonRect, d.content, AndroidLogcatStyles.columnHeader))
                             {
                                 var priorities = (AndroidLogcat.Priority[])Enum.GetValues(typeof(AndroidLogcat.Priority));
-                                EditorUtility.DisplayCustomMenu(new Rect(Event.current.mousePosition, Vector2.zero), priorities.Select(m => new GUIContent(m.ToString())).ToArray(), (int)m_Runtime.ProjectSettings.SelectedPriority, PrioritySelection, null);
+                                EditorUtility.DisplayCustomMenu(new Rect(Event.current.mousePosition, Vector2.zero), priorities.Select(m => new GUIContent(m.ToString())).ToArray(), (int)m_Runtime.UserSettings.SelectedPriority, PrioritySelection, null);
                             }
                             break;
                         case Column.Tag:
                             if (GUI.Button(buttonRect, d.content, AndroidLogcatStyles.columnHeader))
                             {
-                                m_Runtime.ProjectSettings.Tags.DoGUI(new Rect(Event.current.mousePosition, Vector2.zero), buttonRect);
+                                m_Runtime.UserSettings.Tags.DoGUI(new Rect(Event.current.mousePosition, Vector2.zero), buttonRect);
                             }
                             break;
                         default:
@@ -630,4 +629,3 @@ namespace Unity.Android.Logcat
         }
     }
 }
-#endif

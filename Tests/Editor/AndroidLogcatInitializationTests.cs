@@ -1,3 +1,4 @@
+using System;
 using NUnit.Framework;
 using System.IO;
 using System.Linq;
@@ -41,10 +42,10 @@ internal class AndroidLogcatInitializationTests : AndroidLogcatRuntimeTestBase
     private AndroidLogcatTestConsoleWindow StartPlayerSettingsTest()
     {
         InitRuntimeStatic(true);
-        Assert.IsFalse(File.Exists(AndroidLogcatTestRuntime.kProjectSettingsPath));
+        Assert.IsFalse(File.Exists(AndroidLogcatTestRuntime.kUserSettingsPath));
 
         var consoleWindow = AndroidLogcatTestConsoleWindow.CreateInstance<AndroidLogcatTestConsoleWindow>();
-        m_Runtime.ProjectSettings.Tags.Add(kMyCustomTag);
+        m_Runtime.UserSettings.Tags.Add(kMyCustomTag);
 
         return consoleWindow;
     }
@@ -52,15 +53,15 @@ internal class AndroidLogcatInitializationTests : AndroidLogcatRuntimeTestBase
     private void StopPlayerSettingsTest()
     {
         // Check if player settings have our new tag saved
-        var contents = File.ReadAllText(AndroidLogcatTestRuntime.kProjectSettingsPath);
+        var contents = File.ReadAllText(AndroidLogcatTestRuntime.kUserSettingsPath);
         Assert.IsTrue(contents.Contains(kMyCustomTag));
 
         // Resume runtime and see if we can restore player settings
         InitRuntimeStatic(false);
-        Assert.IsTrue(File.Exists(AndroidLogcatTestRuntime.kProjectSettingsPath));
+        Assert.IsTrue(File.Exists(AndroidLogcatTestRuntime.kUserSettingsPath));
         var consoleWindow = AndroidLogcatTestConsoleWindow.CreateInstance<AndroidLogcatTestConsoleWindow>();
 
-        Assert.IsTrue(m_Runtime.ProjectSettings.Tags.Entries.Where(m => m.Name.Equals(kMyCustomTag)).First() != null);
+        Assert.IsTrue(m_Runtime.UserSettings.Tags.Entries.Where(m => m.Name.Equals(kMyCustomTag)).First() != null);
 
         ScriptableObject.DestroyImmediate(consoleWindow);
         ShutdownRuntimeStatic(true);
@@ -106,6 +107,12 @@ myandroid2 device
     [TestCase(false, Description = "Runtime is kept, only editor window is restarted")]
     public void SavedSelectedDeviceIsPickedDuringRestart(bool restartRuntime)
     {
+        if (!AndroidBridge.AndroidExtensionsInstalled && restartRuntime)
+        {
+            Console.WriteLine("Test ignored, since Android Logcat deserialization doesn't work when Android Support is not installed");
+            return;
+        }
+
         InitRuntimeStatic(true);
         try
         {
@@ -121,7 +128,7 @@ myandroid2 device
 
                 InitRuntimeStatic(false);
             }
-            Assert.AreEqual("myandroid2", m_Runtime.ProjectSettings.LastSelectedDeviceId);
+            Assert.AreEqual("myandroid2", m_Runtime.UserSettings.LastSelectedDeviceId);
             query = PrepareQuery();
             consoleWindow = AndroidLogcatTestConsoleWindow.CreateInstance<AndroidLogcatTestConsoleWindow>();
             // Since the selected device was saved in player settings
@@ -141,6 +148,11 @@ myandroid2 device
     [TestCase(false, Description = "Runtime is kept, only editor window is restarted")]
     public void SavedSelectedPackageIsPickedDuringRestart(bool restartRuntime)
     {
+        if (!AndroidBridge.AndroidExtensionsInstalled && restartRuntime)
+        {
+            Console.WriteLine("Test ignored, since Android Logcat deserialization doesn't work when Android Support is not installed");
+            return;
+        }
         InitRuntimeStatic(true);
         try
         {
@@ -152,7 +164,7 @@ myandroid2 device
             var device = query.Devices[deviceName];
             // Pretend to be a user and select the device
             query.SelectDevice(device);
-            m_Runtime.ProjectSettings.LastSelectedPackage = m_Runtime.ProjectSettings.CreatePackageInformation(packageName, 1, device);
+            m_Runtime.UserSettings.LastSelectedPackage = m_Runtime.UserSettings.CreatePackageInformation(packageName, 1, device);
 
             ScriptableObject.DestroyImmediate(consoleWindow);
             if (restartRuntime)
@@ -162,8 +174,8 @@ myandroid2 device
                 InitRuntimeStatic(false);
             }
 
-            Assert.AreEqual(deviceName, m_Runtime.ProjectSettings.LastSelectedDeviceId);
-            Assert.AreEqual(packageName, m_Runtime.ProjectSettings.LastSelectedPackage.name);
+            Assert.AreEqual(deviceName, m_Runtime.UserSettings.LastSelectedDeviceId);
+            Assert.AreEqual(packageName, m_Runtime.UserSettings.LastSelectedPackage.name);
 
             query = PrepareQuery();
             consoleWindow = AndroidLogcatTestConsoleWindow.CreateInstance<AndroidLogcatTestConsoleWindow>();
@@ -171,7 +183,7 @@ myandroid2 device
 
             // Check if Console Window didn't repick a different device/package
             Assert.AreEqual(query.Devices[deviceName], query.SelectedDevice);
-            Assert.AreEqual(packageName, m_Runtime.ProjectSettings.LastSelectedPackage.name);
+            Assert.AreEqual(packageName, m_Runtime.UserSettings.LastSelectedPackage.name);
 
             ScriptableObject.DestroyImmediate(consoleWindow);
         }

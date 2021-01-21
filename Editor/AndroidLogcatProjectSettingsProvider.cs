@@ -1,15 +1,5 @@
-#if PLATFORM_ANDROID
-using System.Collections.Generic;
-using System.Diagnostics;
-using System;
-using System.Text.RegularExpressions;
-using System.Linq;
-using System.Runtime.CompilerServices;
 using UnityEditor;
 using UnityEngine;
-using UnityEditor.Android;
-using System.Text;
-using UnityEngine.UIElements;
 
 namespace Unity.Android.Logcat
 {
@@ -26,7 +16,7 @@ namespace Unity.Android.Logcat
         public AndroidLogcatProjectSettingsProvider(string path, SettingsScope scope)
             : base(path, scope)
         {
-            m_SymbolList = new AndroidLogcatSymbolList(AndroidLogcatManager.instance.Runtime.ProjectSettings.SymbolPaths);
+            m_SymbolList = new AndroidLogcatSymbolList(AndroidLogcatManager.instance.Runtime.UserSettings.SymbolPaths);
         }
 
         public override void OnGUI(string searchContext)
@@ -36,11 +26,12 @@ namespace Unity.Android.Logcat
         }
 
         [SettingsProvider]
-        public static SettingsProvider CreateSettingsProvider()
+        public static SettingsProvider CreateAndroidLogcatProjectSettingsProvider()
         {
+            if (!AndroidBridge.AndroidExtensionsInstalled)
+                return null;
             var provider = new AndroidLogcatProjectSettingsProvider(kSettingsPath, SettingsScope.Project);
             return provider;
         }
     }
 }
-#endif

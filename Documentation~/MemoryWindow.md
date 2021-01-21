@@ -39,6 +39,12 @@ Here's an example of memory dump:
 
 <img hspace="25" src="images/MemoryGroups.png">
 
+* **Resident Set Size (RSS)**
+ 
+  The total **used** memory of the application which is currently stored in RAM, unlike **PSS** memory, **RSS** will include both shared and non-shared memory pages. For example., apps which access the same library will be sharing memory pages.
+
+  **Note:** This metric is only visible on Android 11 or higher.
+
 * **Proportional Set Size (PSS)**
  
   The total **used** memory of the application which is currently stored in RAM. This is not the **total** memory which your application has allocated.
@@ -73,3 +79,12 @@ Here are few examples which memory goes where:
 * You can disable/enable memory types by toggling in the left pane.
 
 * You can select a memory request result by clicking in the right pane.
+
+
+#### Note
+
+When memory window is enabled and requesting captures, you might see the following messages on logcat being constantly printed, this is normal:
+
+    Explicit concurrent copying GC freed 5515(208KB) AllocSpace objects, 1(20KB) LOS objects, 49% free, 1926KB/3852KB, paused 46us total 11.791ms
+
+Disabling the memory window will stop printing these messages.

@@ -1,15 +1,9 @@
-#if PLATFORM_ANDROID
 using System.Collections.Generic;
-using System.Diagnostics;
 using System;
 using System.Text.RegularExpressions;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using UnityEditor;
-using UnityEditor.Android;
 using System.Text;
-
-[assembly: InternalsVisibleTo("Unity.Mobile.AndroidLogcat.EditorTests")]
 
 namespace Unity.Android.Logcat
 {
@@ -81,13 +75,13 @@ namespace Unity.Android.Logcat
         }
 
         private AndroidLogcatRuntimeBase m_Runtime;
-        private ADB adb;
+        private AndroidBridge.ADB adb;
 
         private readonly IAndroidLogcatDevice m_Device;
         private readonly int m_PackagePid;
         private readonly Priority m_MessagePriority;
         private string m_Filter;
-        private readonly bool m_FilterIsRegex;
+        private bool m_FilterIsRegex;
         private Regex m_ManualFilterRegex;
         private readonly string[] m_Tags;
 
@@ -107,7 +101,7 @@ namespace Unity.Android.Logcat
 
         public event Action<IAndroidLogcatDevice> Connected;
 
-        private IAndroidLogcatMessageProvider m_MessageProvider;
+        private AndroidLogcatMessageProviderBase m_MessageProvider;
 
         private List<string> m_CachedLogLines = new List<string>();
 
@@ -129,12 +123,12 @@ namespace Unity.Android.Logcat
             }
         }
 
-        public IAndroidLogcatMessageProvider MessageProvider
+        public AndroidLogcatMessageProviderBase MessageProvider
         {
             get { return m_MessageProvider; }
         }
 
-        public AndroidLogcat(AndroidLogcatRuntimeBase runtime, ADB adb, IAndroidLogcatDevice device, int packagePid, Priority priority, string filter, bool filterIsRegex, string[] tags)
+        public AndroidLogcat(AndroidLogcatRuntimeBase runtime, AndroidBridge.ADB adb, IAndroidLogcatDevice device, int packagePid, Priority priority, string filter, bool filterIsRegex, string[] tags)
         {
             this.m_Runtime = runtime;
             this.adb = adb;
@@ -162,23 +156,22 @@ namespace Unity.Android.Logcat
                 return;
             }
 
+            this.m_Filter = filter;
             if (!this.m_FilterIsRegex)
-            {
-                this.m_Filter = filter;
                 return;
-            }
 
             try
             {
-                this.m_Filter = filter;
                 m_ManualFilterRegex = new Regex(m_Filter, RegexOptions.Compiled);
             }
             catch (Exception ex)
             {
-                var error = string.Format("Input search filter '{0}' is not a valid regular expression.", Regex.Escape(m_Filter));
-                AndroidLogcatInternalLog.Log(error);
+                AndroidLogcatInternalLog.Log($"Input search filter '{m_Filter}' is not a valid regular expression.\n{ex}");
 
-                throw new ArgumentException(error, ex);
+                // Silently disable filtering if supplied regex is wrong
+                m_Filter = string.Empty;
+                m_ManualFilterRegex = null;
+                m_FilterIsRegex = false;
             }
         }
 
@@ -186,8 +179,7 @@ namespace Unity.Android.Logcat
         {
             // For logcat arguments and more details check https://developer.android.com/studio/command-line/logcat
             m_Runtime.Update += OnUpdate;
-
-            m_MessageProvider = m_Runtime.CreateMessageProvider(adb, Filter, MessagePriority, m_Device.SupportsFilteringByPid ? PackagePid : 0, LogPrintFormat, m_Device != null ? m_Device.Id : null, OnDataReceived);
+            m_MessageProvider = m_Runtime.CreateMessageProvider(adb, m_Device.SupportsFilteringByRegex ? Filter : string.Empty, MessagePriority, m_Device.SupportsFilteringByPid ? PackagePid : 0, LogPrintFormat, m_Device, OnDataReceived);
             m_MessageProvider.Start();
 
             Connected?.Invoke(Device);
@@ -196,7 +188,6 @@ namespace Unity.Android.Logcat
         internal void Stop()
         {
             m_CachedLogLines.Clear();
-            m_BuildInfos.Clear();
             m_Runtime.Update -= OnUpdate;
             if (m_MessageProvider != null && !m_MessageProvider.HasExited)
             {
@@ -271,7 +262,6 @@ namespace Unity.Android.Logcat
             if (entries.Count == 0)
                 return;
 
-            ResolveStackTrace(entries);
             LogEntriesAdded(entries);
         }
 
@@ -321,18 +311,6 @@ namespace Unity.Android.Logcat
                 m.Groups["tag"].Value,
                 m.Groups["msg"].Value);
 
-            if ((entry.priority == Priority.Info && entry.tag.GetHashCode() == kUnityHashCode && entry.message.StartsWith("Built from")) ||
-                (entry.priority == Priority.Error && entry.tag.GetHashCode() == kCrashHashCode && entry.message.StartsWith("Build type")))
-            {
-                m_BuildInfos[entry.processId] = AndroidLogcatUtilities.ParseBuildInfo(entry.message);
-            }
-
-            if (entry.priority == Priority.Fatal && entry.tag.GetHashCode() == kDebugHashCode && entry.message.StartsWith("pid:"))
-            {
-                // Crash reported by Android for some pid, need to update buildInfo information for this new pid as well
-                ParseCrashBuildInfo(entry.processId, entry.message);
-            }
-
             return entry;
         }
 
@@ -352,158 +330,13 @@ namespace Unity.Android.Logcat
             }
         }
 
-        private void ParseCrashBuildInfo(int processId, string msg)
-        {
-            var reg = new Regex(@"pid: '(.+)'");
-            Match match = reg.Match(msg);
-
-            if (match.Success)
-            {
-                int pid = Int32.Parse(match.Groups[1].Value);
-                if (pid != processId && m_BuildInfos.ContainsKey(pid))
-                    m_BuildInfos[processId] = m_BuildInfos[pid];
-            }
-        }
-
-        public struct UnresolvedAddress
-        {
-            public int logEntryIndex;
-            public string unresolvedAddress;
-        };
-
-        private void ResolveStackTrace(List<LogEntry> entries)
-        {
-            var unresolvedAddresses = new Dictionary<KeyValuePair<BuildInfo, string>, List<UnresolvedAddress>>();
-
-            // Gather unresolved address if there are any
-            for (int i = 0; i < entries.Count; i++)
-            {
-                var entry = entries[i];
-                // Only process stacktraces from Error/Fatal priorities
-                if (entry.priority != Priority.Error && entry.priority != Priority.Fatal)
-                    continue;
-
-                // Only process stacktraces if tag is "CRASH" or "DEBUG"
-                if (entry.tag.GetHashCode() != kCrashHashCode && entry.tag.GetHashCode() != kDebugHashCode)
-                    continue;
-
-                BuildInfo buildInfo;
-                // Unknown build info, that means we don't know where the symbols are located
-                if (!m_BuildInfos.TryGetValue(entry.processId, out buildInfo))
-                    continue;
-
-                string address, libName;
-                if (!AndroidLogcatUtilities.ParseCrashLine(m_Runtime.Settings.StacktraceResolveRegex, entry.message, out address, out libName))
-                    continue;
-
-                List<UnresolvedAddress> addresses;
-                var key = new KeyValuePair<BuildInfo, string>(buildInfo, libName);
-                if (!unresolvedAddresses.TryGetValue(key, out addresses))
-                    unresolvedAddresses[key] = new List<UnresolvedAddress>();
-
-                unresolvedAddresses[key].Add(new UnresolvedAddress() { logEntryIndex = i, unresolvedAddress = address });
-            }
-
-            var engineDirectory = BuildPipeline.GetPlaybackEngineDirectory(BuildTarget.Android, BuildOptions.None);
-
-
-            // Resolve addresses
-            foreach (var u in unresolvedAddresses)
-            {
-                var buildInfo = u.Key.Key;
-                var libName = u.Key.Value;
-
-                var addresses = u.Value;
-                var symbolPath = CombinePaths(engineDirectory, "Variations", buildInfo.scriptingImplementation, buildInfo.buildType, "Symbols", buildInfo.cpu);
-                var libpath = AndroidLogcatUtilities.GetSymbolFile(symbolPath, libName);
-
-                // For optimizations purposes, we batch addresses which belong to same library, so addr2line can be ran less
-                try
-                {
-                    string[] result;
-                    if (!string.IsNullOrEmpty(libpath))
-                        result = m_Runtime.Tools.RunAddr2Line(libpath, addresses.Select(m => m.unresolvedAddress).ToArray());
-                    else
-                    {
-                        result = new string[addresses.Count];
-                        for (int i = 0; i < addresses.Count; i++)
-                            result[i] = string.Empty;
-                    }
-
-                    for (int i = 0; i < addresses.Count; i++)
-                    {
-                        var idx = addresses[i].logEntryIndex;
-                        var append = string.IsNullOrEmpty(result[i]) ? "(Not Resolved)" : result[i];
-                        entries[idx] = new LogEntry(entries[idx]) { message = ModifyLogEntry(entries[idx].message, append, false)};
-                    }
-                }
-                catch (Exception ex)
-                {
-                    for (int i = 0; i < addresses.Count; i++)
-                    {
-                        var idx = addresses[i].logEntryIndex;
-                        entries[idx] = new LogEntry(entries[idx]) { message = ModifyLogEntry(entries[idx].message, "(Addr2Line failure)", true) };
-                        var errorMessage = new StringBuilder();
-                        errorMessage.AppendLine("Addr2Line failure");
-                        errorMessage.AppendLine("Full Entry Message: " + entries[idx].message);
-                        errorMessage.AppendLine("Scripting Backend: " + buildInfo.scriptingImplementation);
-                        errorMessage.AppendLine("Build Type: " + buildInfo.buildType);
-                        errorMessage.AppendLine("CPU: " + buildInfo.cpu);
-                        errorMessage.AppendLine(ex.Message);
-                        UnityEngine.Debug.LogError(errorMessage.ToString());
-                    }
-                }
-            }
-        }
-
-        private string CombinePaths(params string[] paths)
-        {
-            // Unity hasn't implemented System.IO.Path(string[]), we have to do it on our own.
-            if (paths.Length == 0)
-                return "";
-
-            string path = paths[0];
-            for (int i = 1; i < paths.Length; ++i)
-                path = System.IO.Path.Combine(path, paths[i]);
-            return path;
-        }
-
-        private bool ParseCrashMessage(string msg, out string address, out string libName)
-        {
-            var match = m_CrashMessageRegex.Match(msg);
-            if (match.Success)
-            {
-                address = match.Groups[1].Value;
-                libName = match.Groups[2].Value;
-                return true;
-            }
-            address = null;
-            libName = null;
-            return false;
-        }
-
-        private string ModifyLogEntry(string msg, string appendText, bool keeplOriginalMessage)
-        {
-            if (keeplOriginalMessage)
-            {
-                return msg + " " + appendText;
-            }
-            else
-            {
-                var match = m_CrashMessageRegex.Match(msg);
-                return match.Success ? match.Groups[0].Value + " " + appendText : msg + " " + appendText;
-            }
-        }
-
-        private string PriorityEnumToString(Priority priority)
-        {
-            return priority.ToString().Substring(0, 1);
-        }
-
         private void OnDataReceived(string message)
         {
             // You can receive null string, when you put out USB cable out of PC and logcat connection is lost
-            if (message == null)
+            // You can receive empty string on old devices like LG 5.0
+            // Note: Even if the logcat message is empty, the incoming string still have to contain info about time/pid/tid/etc
+            //       If it contains nothing, ignore it
+            if (string.IsNullOrEmpty(message))
                 return;
 
             lock (m_CachedLogLines)
@@ -528,8 +361,6 @@ namespace Unity.Android.Logcat
             get { return m_Device.SupportYearFormat ? kYearTime : kThreadTime; }
         }
 
-        private Dictionary<int, BuildInfo> m_BuildInfos = new Dictionary<int, BuildInfo>();
-
         internal static Regex m_CrashMessageRegex = new Regex(@"^\s*#\d{2}\s*pc\s([a-fA-F0-9]{8}).*(libunity\.so|libmain\.so)", RegexOptions.Compiled);
         // Regex for messages produced via 'adb logcat -s -v year *:V'
         internal static Regex m_LogCatEntryYearRegex = new Regex(@"(?<date>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(?<pid>\d+)\s+(?<tid>\d+)\s+(?<priority>[VDIWEFS])\s+(?<tag>.+?)\s*:\s(?<msg>.*)", RegexOptions.Compiled);
@@ -547,4 +378,3 @@ namespace Unity.Android.Logcat
         internal const string kYearTime = "year";
     }
 }
-#endif

@@ -2,17 +2,16 @@ using System;
 using System.IO;
 using NUnit.Framework;
 using Unity.Android.Logcat;
-using UnityEditor.Android;
 
 internal class AndroidLogcatTestRuntime : AndroidLogcatRuntimeBase
 {
-    internal static readonly string kProjectSettingsPath = Path.Combine("Tests", "ProjectSettings", "AndroidLogcatSettings.asset");
+    internal static readonly string kUserSettingsPath = Path.Combine("Tests", "UserSettings", "AndroidLogcatSettings.asset");
 
-    protected override string ProjectSettingsPath { get => kProjectSettingsPath; }
+    protected override string UserSettingsPath { get => kUserSettingsPath; }
 
-    public override IAndroidLogcatMessageProvider CreateMessageProvider(ADB adb, string filter, AndroidLogcat.Priority priority, int packageID, string logPrintFormat, string deviceId, Action<string> logCallbackAction)
+    public override AndroidLogcatMessageProviderBase CreateMessageProvider(AndroidBridge.ADB adb, string filter, AndroidLogcat.Priority priority, int packageID, string logPrintFormat, IAndroidLogcatDevice device, Action<string> logCallbackAction)
     {
-        return new AndroidLogcatFakeMessageProvider(adb, filter, priority, packageID, logPrintFormat, deviceId, logCallbackAction);
+        return new AndroidLogcatFakeMessageProvider(adb, filter, priority, packageID, logPrintFormat, device, logCallbackAction);
     }
 
     protected override AndroidTools CreateAndroidTools()

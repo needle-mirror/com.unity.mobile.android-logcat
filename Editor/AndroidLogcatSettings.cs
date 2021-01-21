@@ -1,29 +1,25 @@
-#if PLATFORM_ANDROID
 using System.Collections.Generic;
-using System.Diagnostics;
 using System;
-using System.Text.RegularExpressions;
-using System.Linq;
-using System.Runtime.CompilerServices;
 using UnityEditor;
 using UnityEngine;
-using UnityEditor.Android;
-using System.Text;
-using UnityEngine.UIElements;
 
 namespace Unity.Android.Logcat
 {
     [Serializable]
     internal class AndroidLogcatSettings
     {
-        internal static string kSettingsName = "AndroidLogcatSettings";
+        // Bump this version, whenever adding a new property or changing default
+        // This will force settings to be reset
+        private const int kVersion = 1;
+
+        internal static string kSettingsName = "AndroidLogcatSettings" + kVersion;
 
         // Since querying memory from device is a lengthy operation, here's a cap 500 ms, setting it too low  will make memory request to be delayed
         internal static int kMinMemoryRequestIntervalMS = 500;
 
         internal static readonly string[] kAddressResolveRegex =
         {
-            @"\s*#\d{2}\s*pc\s(?<address>[a-fA-F0-9]+).*(?<libName>lib.*)\.so",
+            @"\s*#\d{2}\s*pc\s(?<address>[a-fA-F0-9]+).*\/(?<abi>\S+)\/(?<libName>lib.*)\.so",
             @".*at (?<libName>lib.*)\.0x(?<address>[a-fA-F0-9]+)\(Native Method\)"
         };
 
@@ -284,4 +280,3 @@ namespace Unity.Android.Logcat
         }
     }
 }
-#endif

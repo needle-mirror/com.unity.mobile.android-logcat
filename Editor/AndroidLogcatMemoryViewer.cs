@@ -1,10 +1,6 @@
-#if PLATFORM_ANDROID
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text.RegularExpressions;
 using UnityEditor;
-using UnityEditor.Android;
 using System.Text;
 using UnityEngine;
 
@@ -24,7 +20,7 @@ namespace Unity.Android.Logcat
         public float MemoryWindowWidth;
         public bool[] MemoryTypeEnabled;
         public MemoryGroup MemoryGroup = MemoryGroup.HeapAlloc;
-        public MemoryViewerBehavior Behavior = MemoryViewerBehavior.Auto;
+        public MemoryViewerBehavior Behavior = MemoryViewerBehavior.Hidden;
     }
 
     internal class AndroidLogcatMemoryViewer
@@ -38,7 +34,7 @@ namespace Unity.Android.Logcat
 
         class AndroidLogcatQueryMemoryInput : IAndroidLogcatTaskInput
         {
-            internal ADB adb;
+            internal AndroidBridge.ADB adb;
             internal int packageProcessId;
             internal string packageName;
             internal string deviceId;
@@ -108,7 +104,7 @@ namespace Unity.Android.Logcat
             m_Parent = parent;
             m_Runtime = runtime;
             m_Material = (Material)EditorGUIUtility.LoadRequired("SceneView/HandleLines.mat");
-            m_State = m_Runtime.ProjectSettings.MemoryViewerState;
+            m_State = m_Runtime.UserSettings.MemoryViewerState;
 
             for (int i = 0; i < kMaxEntries; i++)
                 m_Entries[i] = new AndroidMemoryStatistics();
@@ -189,7 +185,7 @@ namespace Unity.Android.Logcat
             m_Runtime.Dispatcher.Schedule(
                 new AndroidLogcatQueryMemoryInput()
                 {
-                    adb = ADB.GetInstance(),
+                    adb = AndroidBridge.ADB.GetInstance(),
                     packageProcessId = m_ExpectedPackageFromRequest.processId,
                     packageName = m_ExpectedPackageFromRequest.name,
                     deviceId = device.Id
@@ -654,5 +650,3 @@ namespace Unity.Android.Logcat
         }
     }
 }
-
-#endif

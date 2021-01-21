@@ -1,21 +1,23 @@
-#if PLATFORM_ANDROID
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
 using UnityEngine;
-using UnityEditor.Android;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace Unity.Android.Logcat
 {
     internal class AndroidLogcatUtilities
     {
+        internal static readonly string kAbiArm64 = "arm64-v8a";
+        internal static readonly string kAbiArmV7 = "armeabi-v7a";
+        internal static readonly string kAbiX86 = "x86";
+        internal static readonly string kAbiX86_64 = "x86-64";
+
         /// <summary>
         /// Capture the screenshot on the given device.
         /// </summary>
         /// <returns> Return the path to the screenshot on the PC. </returns>
-        public static string CaptureScreen(ADB adb, string deviceId, out string error)
+        public static string CaptureScreen(AndroidBridge.ADB adb, string deviceId, out string error)
         {
             error = string.Empty;
             if (string.IsNullOrEmpty(deviceId))
@@ -70,7 +72,7 @@ namespace Unity.Android.Logcat
         /// <summary>
         /// Get the top activity on the given device.
         /// </summary>
-        public static bool GetTopActivityInfo(ADB adb, IAndroidLogcatDevice device, ref string packageName, ref int packagePid)
+        public static bool GetTopActivityInfo(AndroidBridge.ADB adb, IAndroidLogcatDevice device, ref string packageName, ref int packagePid)
         {
             if (device == null)
                 return false;
@@ -91,7 +93,7 @@ namespace Unity.Android.Logcat
         /// <summary>
         /// Return the pid of the given package on the given device.
         /// </summary>
-        public static int GetPidFromPackageName(ADB adb, IAndroidLogcatDevice device, string packageName)
+        public static int GetPidFromPackageName(AndroidBridge.ADB adb, IAndroidLogcatDevice device, string packageName)
         {
             if (device == null)
                 return -1;
@@ -124,34 +126,45 @@ namespace Unity.Android.Logcat
             }
         }
 
-        public static string GetPackageNameFromPid(ADB adb, IAndroidLogcatDevice device, int processId)
+        internal static string ProcessOutputFromPS(string psOutput)
+        {
+            using (var sr = new StringReader(psOutput))
+            {
+                string line;
+                while ((line = sr.ReadLine().Trim()) != null)
+                {
+                    if (line.Contains("NAME"))
+                        continue;
+
+                    // The process name is always the last split
+                    var entries = line.Split(new[] { ' ', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (entries.Length > 0)
+                        return entries[entries.Length - 1];
+                }
+            }
+
+            return string.Empty;
+        }
+
+        public static string GetPackageNameFromPid(AndroidBridge.ADB adb, IAndroidLogcatDevice device, int processId)
         {
             if (device == null)
                 return string.Empty;
 
             try
             {
-                string cmd = string.Format("-s {0} shell ps -p {1} -o NAME", device.Id, processId);
+                // Note: Flag -o doesn't work on Android 5.0 devices (tested on LGE LG-D620, 5.0.2)
+                string cmd = string.Format("-s {0} shell ps -p {1}", device.Id, processId);
 
                 AndroidLogcatInternalLog.Log("{0} {1}", adb.GetADBPath(), cmd);
                 var output = adb.Run(new[] { cmd }, "Unable to get the package name for pid " + processId);
                 if (string.IsNullOrEmpty(output))
                     return string.Empty;
 
-                using (var sr = new StringReader(output))
-                {
-                    string line;
-                    while ((line = sr.ReadLine().Trim()) != null)
-                    {
-                        if (line.Equals("NAME"))
-                            continue;
-
-                        return line;
-                    }
-                }
-
-                AndroidLogcatInternalLog.Log("Unable to get the package name for pid " + processId + "\nOutput:\n" + output);
-                return string.Empty;
+                var result = ProcessOutputFromPS(output);
+                if (string.IsNullOrEmpty(result))
+                    AndroidLogcatInternalLog.Log("Unable to get the package name for pid " + processId + "\nOutput:\n" + output);
+                return result;
             }
             catch (Exception ex)
             {
@@ -361,7 +374,7 @@ namespace Unity.Android.Logcat
         /// <returns></returns>
         internal static string GetSymbolFile(string symbolPath, string libraryFile)
         {
-            var fullPath = Path.Combine(symbolPath, libraryFile);
+            var fullPath = Path.GetFullPath(Path.Combine(symbolPath, libraryFile));
             if (File.Exists(fullPath))
                 return fullPath;
 
@@ -369,7 +382,7 @@ namespace Unity.Android.Logcat
             foreach (var e in extensionsToTry)
             {
                 // Try sym.so extension
-                fullPath = Path.Combine(symbolPath, Path.GetFileNameWithoutExtension(libraryFile) + e);
+                fullPath = Path.GetFullPath(Path.Combine(symbolPath, Path.GetFileNameWithoutExtension(libraryFile) + e));
                 if (File.Exists(fullPath))
                     return fullPath;
             }
@@ -377,12 +390,19 @@ namespace Unity.Android.Logcat
             return string.Empty;
         }
 
-        internal static string GetSymbolFile(IReadOnlyList<ReordableListItem> symbolPaths, string libraryFile)
+        internal static string GetSymbolFile(IReadOnlyList<ReordableListItem> symbolPaths, string abi, string libraryFile)
         {
             foreach (var symbolPath in symbolPaths)
             {
                 if (!symbolPath.Enabled)
                     continue;
+
+                if (!string.IsNullOrEmpty(abi))
+                {
+                    var fileWithABI = GetSymbolFile(Path.Combine(symbolPath.Name, abi), libraryFile);
+                    if (!string.IsNullOrEmpty(fileWithABI))
+                        return fileWithABI;
+                }
 
                 var file = GetSymbolFile(symbolPath.Name, libraryFile);
                 if (!string.IsNullOrEmpty(file))
@@ -392,8 +412,9 @@ namespace Unity.Android.Logcat
             return string.Empty;
         }
 
-        internal static bool ParseCrashLine(IReadOnlyList<ReordableListItem> regexs, string msg, out string address, out string libName)
+        internal static bool ParseCrashLine(IReadOnlyList<ReordableListItem> regexs, string msg, out string abi, out string address, out string libName)
         {
+            abi = string.Empty;
             foreach (var regexItem in regexs)
             {
                 if (!regexItem.Enabled)
@@ -402,6 +423,19 @@ namespace Unity.Android.Logcat
                 var match = new Regex(regexItem.Name).Match(msg);
                 if (match.Success)
                 {
+                    var rawAbi = match.Groups["abi"].Value;
+                    if (!string.IsNullOrEmpty(rawAbi))
+                    {
+                        if (rawAbi.Equals("arm"))
+                            abi = kAbiArmV7;
+                        else if (rawAbi.Equals("arm64"))
+                            abi = kAbiArm64;
+                        else if (rawAbi.Equals("x86"))
+                            abi = kAbiX86;
+                        else if (rawAbi.Equals("x86_64"))
+                            abi = kAbiX86_64;
+                    }
+
                     address = match.Groups["address"].Value;
                     libName = match.Groups["libName"].Value + ".so";
                     return true;
@@ -412,17 +446,10 @@ namespace Unity.Android.Logcat
             libName = null;
             return false;
         }
-    }
-}
-#else
-namespace Unity.Android.Logcat
-{
-    internal class AndroidLogcatUtilities
-    {
-        public static void ShowActivePlatformNotAndroidMessage()
+
+        internal static void ShowAndroidIsNotInstalledMessage()
         {
-            UnityEditor.EditorGUILayout.HelpBox("Please switch active platform to be Android in Build Settings Window.", UnityEditor.MessageType.Info);
+            UnityEditor.EditorGUILayout.HelpBox("Android Logcat requires Android support to be installed.", UnityEditor.MessageType.Info);
         }
     }
 }
-#endif
