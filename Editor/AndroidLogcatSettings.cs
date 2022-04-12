@@ -27,7 +27,10 @@ namespace Unity.Android.Logcat
         private int m_MemoryRequestInterval;
 
         [SerializeField]
-        private int m_MaxMessageCount;
+        private int m_MaxCachedMessageCount;
+
+        [SerializeField]
+        private int m_MaxDisplayedMessageCount;
 
         [SerializeField]
         private Font m_MessageFont;
@@ -45,6 +48,9 @@ namespace Unity.Android.Logcat
 
         [SerializeField]
         private List<ReordableListItem> m_StacktraceResolveRegex;
+
+        [SerializeField]
+        private int m_MaxExitedPackagesToShow;
 
         internal int MemoryRequestIntervalMS
         {
@@ -64,21 +70,59 @@ namespace Unity.Android.Logcat
             }
         }
 
-        internal int MaxMessageCount
+        internal int MaxCachedMessageCount
         {
             set
             {
-                if (m_MaxMessageCount == value)
+                if (m_MaxCachedMessageCount == value)
                     return;
-                m_MaxMessageCount = value;
+                m_MaxCachedMessageCount = value;
+                m_MaxDisplayedMessageCount = ValidateDisplayedMessageCount(m_MaxDisplayedMessageCount);
                 InvokeOnSettingsChanged();
             }
             get
             {
-                return m_MaxMessageCount;
+                return m_MaxCachedMessageCount;
             }
         }
 
+        internal int MaxDisplayedMessageCount
+        {
+            set
+            {
+                value = ValidateDisplayedMessageCount(value);
+                if (m_MaxDisplayedMessageCount == value)
+                    return;
+                m_MaxDisplayedMessageCount = value;
+                InvokeOnSettingsChanged();
+            }
+            get
+            {
+                return m_MaxDisplayedMessageCount;
+            }
+        }
+
+        private int ValidateDisplayedMessageCount(int newDisplayedMessageCount)
+        {
+            if (MaxCachedMessageCount > 0)
+                newDisplayedMessageCount = Math.Min(newDisplayedMessageCount, MaxCachedMessageCount);
+            return newDisplayedMessageCount;
+        }
+
+        internal int MaxExitedPackagesToShow
+        {
+            set
+            {
+                if (m_MaxExitedPackagesToShow == value)
+                    return;
+                m_MaxExitedPackagesToShow = value;
+                InvokeOnSettingsChanged();
+            }
+            get
+            {
+                return m_MaxExitedPackagesToShow;
+            }
+        }
         internal Font MessageFont
         {
             set
@@ -109,7 +153,7 @@ namespace Unity.Android.Logcat
             }
         }
 
-        internal void SetMessageColor(AndroidLogcat.Priority priority, Color color)
+        internal void SetMessageColor(Priority priority, Color color)
         {
             var messages = EditorGUIUtility.isProSkin ? m_MessageColorsProSkin : m_MessageColorsFreeSkin;
 
@@ -123,7 +167,7 @@ namespace Unity.Android.Logcat
             InvokeOnSettingsChanged();
         }
 
-        internal Color GetMessageColor(AndroidLogcat.Priority priority)
+        internal Color GetMessageColor(Priority priority)
         {
             var messages = EditorGUIUtility.isProSkin ? m_MessageColorsProSkin : m_MessageColorsFreeSkin;
             if ((int)priority < messages.Count)
@@ -152,15 +196,17 @@ namespace Unity.Android.Logcat
         internal void Reset()
         {
             m_MemoryRequestInterval = 500;
-            m_MaxMessageCount = 60000;
-            m_MessageFont = AssetDatabase.LoadAssetAtPath<Font>("Packages/com.unity.mobile.android-logcat/Editor/Resources/consola.ttf");
+            m_MaxCachedMessageCount = 60000;
+            m_MaxDisplayedMessageCount = 60000;
+            m_MessageFont = AssetDatabase.LoadAssetAtPath<Font>("Packages/com.unity.mobile.android-logcat/Editor/Fonts/consola.ttf");
             m_MessageFontSize = 11;
-            if (Enum.GetValues(typeof(AndroidLogcat.Priority)).Length != 6)
+            m_MaxExitedPackagesToShow = 4;
+            if (Enum.GetValues(typeof(Priority)).Length != 6)
                 throw new Exception("Unexpected length of Priority enum.");
 
             m_MessageColorsProSkin = new List<Color>();
             m_MessageColorsFreeSkin = new List<Color>();
-            foreach (var p in (AndroidLogcat.Priority[])Enum.GetValues(typeof(AndroidLogcat.Priority)))
+            foreach (var p in (Priority[])Enum.GetValues(typeof(Priority)))
             {
                 m_MessageColorsProSkin.Add(GetDefaultColor(p, true));
                 m_MessageColorsFreeSkin.Add(GetDefaultColor(p, false));
@@ -205,9 +251,9 @@ namespace Unity.Android.Logcat
             return columns;
         }
 
-        private Color GetDefaultColor(AndroidLogcat.Priority priority, bool isProSkin)
+        private Color GetDefaultColor(Priority priority, bool isProSkin)
         {
-            if (Enum.GetValues(typeof(AndroidLogcat.Priority)).Length != 6)
+            if (Enum.GetValues(typeof(Priority)).Length != 6)
                 throw new Exception("Unexpected length of Priority enum.");
 
             if (isProSkin)

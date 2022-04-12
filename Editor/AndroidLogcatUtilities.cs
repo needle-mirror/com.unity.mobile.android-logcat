@@ -17,13 +17,13 @@ namespace Unity.Android.Logcat
         /// Capture the screenshot on the given device.
         /// </summary>
         /// <returns> Return the path to the screenshot on the PC. </returns>
-        public static string CaptureScreen(AndroidBridge.ADB adb, string deviceId, out string error)
+        public static bool CaptureScreen(AndroidBridge.ADB adb, string deviceId, string imagePathOnHost, out string error)
         {
             error = string.Empty;
             if (string.IsNullOrEmpty(deviceId))
             {
                 error = "Invalid device id.";
-                return null;
+                return false;
             }
 
             try
@@ -41,12 +41,10 @@ namespace Unity.Android.Logcat
                     AndroidLogcatInternalLog.Log(outputMsg);
                     Debug.LogError(outputMsg);
                     error = outputMsg;
-                    return null;
+                    return false;
                 }
 
-                // Pull screenshot from the device to temp folder.
-                var filePath = Path.Combine(Path.GetTempPath(), "screen_" + DateTime.Now.ToString("yyyy-MM-dd-HH-mm-ss") + ".png");
-                cmd = string.Format("-s {0} pull {1} {2}", deviceId, screenshotPathOnDevice, filePath);
+                cmd = string.Format("-s {0} pull \"{1}\" \"{2}\"", deviceId, screenshotPathOnDevice, imagePathOnHost);
                 AndroidLogcatInternalLog.Log("{0} {1}", adb.GetADBPath(), cmd);
 
                 errorMsg = "Unable to pull the screenshot from device ";
@@ -56,17 +54,29 @@ namespace Unity.Android.Logcat
                     AndroidLogcatInternalLog.Log(outputMsg);
                     Debug.LogError(outputMsg);
                     error = outputMsg;
-                    return null;
+                    return false;
                 }
 
-                return filePath;
+                return true;
             }
             catch (Exception ex)
             {
                 AndroidLogcatInternalLog.Log("Exception caugth while capturing screen on device {0}. Details\r\n:{1}", deviceId, ex);
                 error = ex.Message;
-                return null;
+                return false;
             }
+        }
+
+        public static string GetTemporaryPath(IAndroidLogcatDevice device, string name, string extension)
+        {
+            string fileName = device != null ? device.Id : "NoDevice";
+            if (device != null)
+            {
+                foreach (var p in Path.GetInvalidFileNameChars())
+                    fileName = fileName.Replace(p, '_');
+            }
+            fileName = $"{name}_{fileName}{extension}";
+            return Path.Combine(Application.dataPath, "..", "Temp", fileName).Replace("\\", "/");
         }
 
         /// <summary>
@@ -121,8 +131,24 @@ namespace Unity.Android.Logcat
             }
             catch (Exception ex)
             {
-                AndroidLogcatInternalLog.Log(ex.Message);
+                AndroidLogcatInternalLog.Log($"Failed to get process id for {packageName}:\n{ex.Message}");
                 return -1;
+            }
+        }
+
+        public static bool KillProcesss(AndroidBridge.ADB adb, IAndroidLogcatDevice device, int pid)
+        {
+            try
+            {
+                var cmd = $"-s {device.Id} shell kill {pid}";
+                AndroidLogcatInternalLog.Log("{0} {1}", adb.GetADBPath(), cmd);
+                adb.Run(new[] { cmd }, $"Unable to kill process {pid}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AndroidLogcatInternalLog.Log($"Failed to kill process with process id {pid}:\n{ex.Message}");
+                return false;
             }
         }
 
@@ -275,7 +301,7 @@ namespace Unity.Android.Logcat
             switch (Application.platform)
             {
                 case RuntimePlatform.WindowsEditor:
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe") {WorkingDirectory = workingDirectory});
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe") { WorkingDirectory = workingDirectory });
                     break;
                 case RuntimePlatform.OSXEditor:
                     var pathsToCheck = new[]
@@ -292,7 +318,7 @@ namespace Unity.Android.Logcat
                         }
                     }
 
-                    throw new Exception(string.Format("Failed to launch Terminal app, tried following paths:\n{0}", string.Join("\n",  pathsToCheck)));
+                    throw new Exception(string.Format("Failed to launch Terminal app, tried following paths:\n{0}", string.Join("\n", pathsToCheck)));
                 default:
                     throw new Exception("Don't know how to open terminal on " + Application.platform.ToString());
             }
@@ -450,6 +476,56 @@ namespace Unity.Android.Logcat
         internal static void ShowAndroidIsNotInstalledMessage()
         {
             UnityEditor.EditorGUILayout.HelpBox("Android Logcat requires Android support to be installed.", UnityEditor.MessageType.Info);
+        }
+
+        internal static void ApplySettings(AndroidLogcatRuntimeBase runtime, AndroidLogcat logcat)
+        {
+            if (runtime == null)
+                throw new ArgumentNullException("AndroidLogcatRuntimeBase is null");
+            var settings = runtime.Settings;
+            var userSettings = runtime.UserSettings;
+            var selectedDevice = runtime.DeviceQuery.SelectedDevice;
+
+            int fixedHeight = settings.MessageFontSize + 5;
+            AndroidLogcatStyles.kLogEntryFontSize = settings.MessageFontSize;
+            AndroidLogcatStyles.kLogEntryFixedHeight = fixedHeight;
+            AndroidLogcatStyles.background.fixedHeight = fixedHeight;
+            AndroidLogcatStyles.backgroundEven.fixedHeight = fixedHeight;
+            AndroidLogcatStyles.backgroundOdd.fixedHeight = fixedHeight;
+            AndroidLogcatStyles.priorityDefaultStyle.font = settings.MessageFont;
+            AndroidLogcatStyles.priorityDefaultStyle.fontSize = settings.MessageFontSize;
+            AndroidLogcatStyles.priorityDefaultStyle.fixedHeight = fixedHeight;
+            foreach (var p in (Priority[])Enum.GetValues(typeof(Priority)))
+            {
+                AndroidLogcatStyles.priorityStyles[(int)p].normal.textColor = settings.GetMessageColor(p);
+                AndroidLogcatStyles.priorityStyles[(int)p].font = settings.MessageFont;
+                AndroidLogcatStyles.priorityStyles[(int)p].fontSize = settings.MessageFontSize;
+                AndroidLogcatStyles.priorityStyles[(int)p].fixedHeight = fixedHeight;
+            }
+
+            logcat?.StripFilteredEntriesIfNeeded();
+            logcat?.StripRawEntriesIfNeeded();
+            userSettings.CleanupDeadPackagesForDevice(selectedDevice, settings.MaxExitedPackagesToShow);
+        }
+
+        // When we use / in context menu, this creates submenu, which is no good
+        // Replace it with unicode slash, while it won't display this in pretty way, it's still better than not displaying anything
+        internal static string FixSlashesForIMGUI(string value)
+        {
+            return value.Replace("/", " \u2215");
+        }
+
+        internal static bool FileExists(AndroidLogcatRuntimeBase runtime, IAndroidLogcatDevice device, string path)
+        {
+            try
+            {
+                var result = runtime.Tools.ADB.Run(new[] { $"-s {device.Id}", "shell", "ls", path }, $"Couldn't query '{path}'");
+                return path.Equals(result);
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

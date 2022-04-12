@@ -3,14 +3,19 @@ using UnityEditor;
 
 namespace Unity.Android.Logcat
 {
+    /// <summary>
+    /// UI styles.
+    /// Note: Don't use EditorStyles, since they're not initialized if Editor is ran in batch mode, for ex., tests
+    /// </summary>
     static class AndroidLogcatStyles
     {
         public const int kFontSize = 10;
         public const int kFixedHeight = kFontSize + 9;
-        public static GUIStyle toolbar = new GUIStyle("toolbar") { fontSize = kFontSize, fixedHeight = kFixedHeight};
+        public static GUIStyle toolbar = new GUIStyle("toolbar") { fontSize = kFontSize, fixedHeight = kFixedHeight };
         public static GUIStyle toolbarButton = new GUIStyle("toolbarButton") { fontSize = kFontSize, fixedHeight = kFixedHeight };
         public static GUIStyle toolbarPopup = new GUIStyle("toolbarPopup") { fontSize = kFontSize, fixedHeight = kFixedHeight };
         public static GUIStyle toolbarPopupCenter = new GUIStyle("toolbarPopup") { fontSize = kFontSize, fixedHeight = kFixedHeight, alignment = TextAnchor.MiddleCenter };
+        public static GUIStyle toolbarLabelLeft = new GUIStyle("toolbarButton") { fontSize = kFontSize, fixedHeight = kFixedHeight, alignment = TextAnchor.MiddleLeft };
 
         public static GUIStyle columnHeader = new GUIStyle("OL TITLE");
 
@@ -24,7 +29,7 @@ namespace Unity.Android.Logcat
         public static GUIStyle infoSmallStyle = new GUIStyle("CN EntryInfoIconSmall") { fixedHeight = kLogEntryFixedHeight };
         public static GUIStyle warningSmallStyle = new GUIStyle("CN EntryWarnIconSmall") { fixedHeight = kLogEntryFixedHeight };
         public static GUIStyle errorSmallStyle = new GUIStyle("CN EntryErrorIconSmall") { fixedHeight = kLogEntryFixedHeight };
-        public static GUIStyle priorityDefaultStyle = new GUIStyle(EditorStyles.miniLabel)
+        public static GUIStyle priorityDefaultStyle = new GUIStyle("miniLabel")
         {
             fontSize = kLogEntryFontSize,
             fixedHeight = kLogEntryFixedHeight,
@@ -53,10 +58,10 @@ namespace Unity.Android.Logcat
         public static GUIStyle tagEntryBackground = new GUIStyle("CN EntryBackodd") { fixedHeight = kTagEntryFixedHeight };
         public static GUIStyle tagEntryBackgroundOdd = new GUIStyle("CN EntryBackodd") { fixedHeight = kTagEntryFixedHeight };
         public static GUIStyle tagEntryBackgroundEven = new GUIStyle("CN EntryBackEven") { fixedHeight = kTagEntryFixedHeight };
-        public static GUIStyle tagEntryStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = kTagEntryFontSize, fixedHeight = kTagEntryFixedHeight };
-        public static GUIStyle tagToggleStyle = new GUIStyle(EditorStyles.toggle) { fixedWidth = ktagToggleFixedWidth, fixedHeight = kTagEntryFixedHeight };
-        public static GUIStyle tagButtonStyle = new GUIStyle(EditorStyles.miniButton) { fixedHeight = kTagEntryFixedHeight };
-        public static GUIStyle removeTextStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 8, fixedHeight = kTagEntryFixedHeight };
+        public static GUIStyle tagEntryStyle = new GUIStyle("miniLabel") { fontSize = kTagEntryFontSize, fixedHeight = kTagEntryFixedHeight };
+        public static GUIStyle tagToggleStyle = new GUIStyle("toggle") { fixedWidth = ktagToggleFixedWidth, fixedHeight = kTagEntryFixedHeight };
+        public static GUIStyle tagButtonStyle = new GUIStyle("miniButton") { fixedHeight = kTagEntryFixedHeight };
+        public static GUIStyle removeTextStyle = new GUIStyle("miniLabel") { fontSize = 8, fixedHeight = kTagEntryFixedHeight };
         public static readonly GUIStyle kSeriesLabel = "ProfilerPaneSubLabel";
 
         public static GUIStyle stacktraceStyle = new GUIStyle("textArea")
@@ -98,7 +103,7 @@ namespace Unity.Android.Logcat
 
         public static Font GetFont()
         {
-            return (Font)EditorGUIUtility.LoadRequired("Packages/com.unity.mobile.android-logcat/Editor/Resources/consola.ttf");
+            return (Font)EditorGUIUtility.LoadRequired("Packages/com.unity.mobile.android-logcat/Editor/Fonts/consola.ttf");
         }
 
         internal class StatusWheel
@@ -137,12 +142,16 @@ namespace Unity.Android.Logcat
 
         public static Texture2D LoadIcon(string name)
         {
-            var tex = (Texture2D)EditorGUIUtility.Load($"Packages/com.unity.mobile.android-logcat/Editor/Resources/{name}.png");
+            var tex = (Texture2D)EditorGUIUtility.Load($"Packages/com.unity.mobile.android-logcat/Editor/Textures/{name}.png");
             return tex;
         }
 
         internal static GUIContent kIconToolbarDown = new GUIContent(LoadIcon("DownArrow"));
         internal static GUIContent kIconToolbarUp = new GUIContent(LoadIcon("UpArrow"));
         internal static GUIContent kIconReset = new GUIContent(LoadIcon("Reset"), "Reset");
+        internal static GUIContent[] kIconPlay = new[] {
+            new GUIContent(LoadIcon("PlayOn")),
+            new GUIContent(LoadIcon("PlayOff"))
+        };
     }
 }

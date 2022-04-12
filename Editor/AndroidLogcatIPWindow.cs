@@ -35,6 +35,7 @@ namespace Unity.Android.Logcat
             m_PortString = EditorPrefs.GetString(kAndroidLogcatLastPort, "5555");
 
             m_Runtime.DeviceQuery.DevicesUpdated += DevicesUpdated;
+            m_Runtime.Closing += OnDisable;
 
             // Disable progress bar just in case, if we have a stale process hanging where we peform adb connect
             EditorUtility.ClearProgressBar();
@@ -47,6 +48,7 @@ namespace Unity.Android.Logcat
             if (m_Runtime == null)
                 return;
             m_Runtime.DeviceQuery.DevicesUpdated -= DevicesUpdated;
+            m_Runtime = null;
         }
 
         private void DevicesUpdated()
@@ -59,10 +61,10 @@ namespace Unity.Android.Logcat
         /// Please refer to https://developer.android.com/studio/command-line/adb#wireless for details.
         /// </summary>
         /// <param name="ip"> The ip address of the device that needs to be connected. Port can be included like 'device_ip_address:port'. Both IPV4 and IPV6 are supported. </param>
-        public  void ConnectDevice(string ip, string port)
+        public void ConnectDevice(string ip, string port)
         {
             EditorUtility.DisplayProgressBar("Connecting", "Connecting to " + ip + ":" + port, 0.0f);
-            m_Runtime.Dispatcher.Schedule(new AndroidLogcatConnectToDeviceInput() { adb = m_Runtime.Tools.ADB, ip = ip, port = port}, AndroidLogcatConnectToDeviceTask.Execute, IntegrateConnectToDevice, false);
+            m_Runtime.Dispatcher.Schedule(new AndroidLogcatConnectToDeviceInput() { adb = m_Runtime.Tools.ADB, ip = ip, port = port }, AndroidLogcatConnectToDeviceTask.Execute, IntegrateConnectToDevice, false);
         }
 
         public void SetTCPIPAndConnectDevice(string deviceId, string ip, string port)
@@ -192,11 +194,13 @@ namespace Unity.Android.Logcat
                 EditorGUI.BeginDisabledGroup(string.IsNullOrEmpty(m_IpString));
                 if (GUILayout.Button("Connect"))
                 {
-                    Close();
                     EditorPrefs.SetString(kAndroidLogcatLastIp, m_IpString);
                     EditorPrefs.SetString(kAndroidLogcatLastPort, m_PortString);
                     ConnectDevice(m_IpString, m_PortString);
+                    // Close must be called after ConnectDevice, since Close calls OnDisable
+                    Close();
                     GUIUtility.ExitGUI();
+                    return;
                 }
                 EditorGUI.EndDisabledGroup();
                 if (GUILayout.Button("Refresh Devices"))

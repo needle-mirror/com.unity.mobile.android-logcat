@@ -10,12 +10,14 @@ namespace Unity.Android.Logcat
 
         class Styles
         {
-            public static GUIContent maxMessageCount = new GUIContent("Max Count", "The maximum number of messages.");
+            public static GUIContent maxCachedMessageCount = new GUIContent("Max Cached Messages", "The maximum number of unfiltered messages which are kept in the cache and are used when filtering messages. The number of cached messages affects the performing of filtering. 0 - no limit.");
+            public static GUIContent maxDisplayedMessageCount = new GUIContent("Max Displayed Messages", "The maximum number of messages which are shown in the list, cannot be bigger than cached message count. 0 - no limit.");
             public static GUIContent font = new GUIContent("Font", "Font used for displaying messages");
             public static GUIContent fontSize = new GUIContent("Font Size");
             public static GUIContent stactraceRegex = new GUIContent("Stacktrace Regex", "Configure regex used for resolving function address and library name");
             public static GUIContent requestIntervalMS = new GUIContent("Request Interval ms",
                 $"How often to request memory dump from the device? The minimum value is {AndroidLogcatSettings.kMinMemoryRequestIntervalMS} ms");
+            public static GUIContent maxExitedPackageToShow = new GUIContent("Max Exited Packages", "The maximum number of packages in package selection which have exited.");
         }
 
         private AndroidLogcatRuntimeBase m_Runtime;
@@ -35,15 +37,15 @@ namespace Unity.Android.Logcat
         {
             var settings = Settings;
             EditorGUILayout.LabelField("Messages", EditorStyles.boldLabel);
-            settings.MaxMessageCount =
-                EditorGUILayout.IntSlider(Styles.maxMessageCount, settings.MaxMessageCount, 1, 100000);
-            settings.MessageFont =
-                (Font)EditorGUILayout.ObjectField(Styles.font, settings.MessageFont, typeof(Font), true);
+            settings.MaxCachedMessageCount = EditorGUILayout.IntSlider(Styles.maxCachedMessageCount, settings.MaxCachedMessageCount, 0, 100000);
+            settings.MaxDisplayedMessageCount = EditorGUILayout.IntSlider(Styles.maxDisplayedMessageCount, settings.MaxDisplayedMessageCount, 0, 100000);
+
+            settings.MessageFont = (Font)EditorGUILayout.ObjectField(Styles.font, settings.MessageFont, typeof(Font), true);
             settings.MessageFontSize = EditorGUILayout.IntSlider(Styles.fontSize, settings.MessageFontSize, 5, 25);
 
             GUILayout.Space(20);
             EditorGUILayout.LabelField("Message Colors", EditorStyles.boldLabel);
-            foreach (var p in (AndroidLogcat.Priority[])Enum.GetValues(typeof(AndroidLogcat.Priority)))
+            foreach (var p in (Priority[])Enum.GetValues(typeof(Priority)))
             {
                 settings.SetMessageColor(p, EditorGUILayout.ColorField(p.ToString(), settings.GetMessageColor(p)));
             }
@@ -54,6 +56,12 @@ namespace Unity.Android.Logcat
                 EditorGUILayout.IntField(Styles.requestIntervalMS, settings.MemoryRequestIntervalMS);
             GUILayout.Space(20);
 
+            GUILayout.Space(20);
+            EditorGUILayout.LabelField("Packages", EditorStyles.boldLabel);
+
+            settings.MaxExitedPackagesToShow = EditorGUILayout.IntSlider(Styles.maxExitedPackageToShow, settings.MaxExitedPackagesToShow, 1, 100);
+
+            GUILayout.Space(20);
             EditorGUILayout.LabelField(Styles.stactraceRegex, EditorStyles.boldLabel);
             m_RegexList.OnGUI(150.0f);
 

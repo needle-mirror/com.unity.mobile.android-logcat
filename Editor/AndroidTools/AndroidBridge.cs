@@ -117,6 +117,8 @@ namespace Unity.Android.Logcat
 
             private ADB(System.Object adbObject)
             {
+                if (adbObject == null)
+                    throw new ArgumentNullException("ADB instance cannot be null. Is Android SDK set?");
                 m_ADBObject = adbObject;
             }
 
@@ -127,7 +129,7 @@ namespace Unity.Android.Logcat
 
             public string Run(string[] command, string errorMsg)
             {
-                return (string)RunMethodInfo.Invoke(m_ADBObject, new Object[] { command, errorMsg});
+                return (string)RunMethodInfo.Invoke(m_ADBObject, new Object[] { command, errorMsg });
             }
 
             public static ADB GetInstance()
@@ -158,7 +160,7 @@ namespace Unity.Android.Logcat
                 {
                     get
                     {
-                        return (string)m_GetItemPropertyInfo.GetValue(m_PropertiesTableObject, new Object[] {key});
+                        return (string)m_GetItemPropertyInfo.GetValue(m_PropertiesTableObject, new Object[] { key });
                     }
                 }
             }

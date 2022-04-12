@@ -10,14 +10,35 @@ namespace Unity.Android.Logcat
     [Serializable]
     internal class AndroidLogcatUserSettings
     {
-        internal const int kMaxExitedPackages = 5;
+        [Serializable]
+        internal class VideoSettings
+        {
+            [SerializeField]
+            internal bool TimeLimitEnabled;
+            [SerializeField]
+            internal uint TimeLimit;
+            [SerializeField]
+            internal bool VideoSizeEnabled;
+            [SerializeField]
+            internal uint VideoSizeX;
+            [SerializeField]
+            internal uint VideoSizeY;
+            [SerializeField]
+            internal bool BitRateEnabled;
+            [SerializeField]
+            internal ulong BitRateK;
+            [SerializeField]
+            internal bool DisplayIdEnabled;
+            [SerializeField]
+            internal string DisplayId;
+        }
 
         [SerializeField]
         private string m_SelectedDeviceId;
         [SerializeField]
         private PackageInformation m_SelectedPackage;
         [SerializeField]
-        private AndroidLogcat.Priority m_SelectedPriority;
+        private Priority m_SelectedPriority;
         private Dictionary<string, List<PackageInformation>> m_KnownPackages;
         [SerializeField]
         private List<PackageInformation> m_KnownPackagesForSerialization;
@@ -26,11 +47,11 @@ namespace Unity.Android.Logcat
         [SerializeField]
         private AndroidLogcatMemoryViewerState m_MemoryViewerState;
         [SerializeField]
-        private string m_Filter;
-        [SerializeField]
-        private bool m_FilterIsRegularExpression;
+        private FilterOptions m_FilterOptions;
         [SerializeField]
         private List<ReordableListItem> m_SymbolPaths;
+        [SerializeField]
+        private VideoSettings m_CaptureVideoSettings;
 
         public string LastSelectedDeviceId
         {
@@ -74,7 +95,7 @@ namespace Unity.Android.Logcat
             }
         }
 
-        public AndroidLogcat.Priority SelectedPriority
+        public Priority SelectedPriority
         {
             set
             {
@@ -85,6 +106,9 @@ namespace Unity.Android.Logcat
                 return m_SelectedPriority;
             }
         }
+
+        public VideoSettings CaptureVideoSettings { set => m_CaptureVideoSettings = value; get => m_CaptureVideoSettings; }
+
 
         private void RefreshPackagesForSerialization()
         {
@@ -114,7 +138,7 @@ namespace Unity.Android.Logcat
             return packages;
         }
 
-        public void CleanupDeadPackagesForDevice(IAndroidLogcatDevice device)
+        public void CleanupDeadPackagesForDevice(IAndroidLogcatDevice device, int maxExitedPackagesToShow)
         {
             if (device == null)
                 return;
@@ -132,7 +156,7 @@ namespace Unity.Android.Logcat
             }
 
             // Need to remove the package which were added first, since they are the oldest packages
-            int deadPackagesToRemove = deadPackageCount - kMaxExitedPackages;
+            int deadPackagesToRemove = deadPackageCount - maxExitedPackagesToShow;
             if (deadPackagesToRemove <= 0)
                 return;
 
@@ -155,6 +179,12 @@ namespace Unity.Android.Logcat
         {
             if (pid <= 0)
                 return null;
+
+            if (device == null)
+            {
+                Debug.LogError("Cannot create package information, since there's no Android device connected.");
+                return null;
+            }
 
             var packages = GetOrCreatePackagesForDevice(device);
             PackageInformation info = packages.FirstOrDefault(package => package.processId == pid);
@@ -214,30 +244,17 @@ namespace Unity.Android.Logcat
             }
         }
 
-        public string Filter
+        public FilterOptions FilterOptions
         {
             set
             {
-                m_Filter = value;
+                m_FilterOptions = value;
             }
             get
             {
-                return m_Filter;
+                return m_FilterOptions;
             }
         }
-
-        public bool FilterIsRegularExpression
-        {
-            set
-            {
-                m_FilterIsRegularExpression = value;
-            }
-            get
-            {
-                return m_FilterIsRegularExpression;
-            }
-        }
-
         public List<ReordableListItem> SymbolPaths
         {
             get => m_SymbolPaths;
@@ -251,11 +268,31 @@ namespace Unity.Android.Logcat
         internal void Reset()
         {
             m_SelectedDeviceId = string.Empty;
-            m_SelectedPriority = AndroidLogcat.Priority.Verbose;
+            m_SelectedPriority = Priority.Verbose;
             m_Tags = new AndroidLogcatTags();
             m_KnownPackages = new Dictionary<string, List<PackageInformation>>();
             m_MemoryViewerState = new AndroidLogcatMemoryViewerState();
             m_SymbolPaths = new List<ReordableListItem>();
+            m_FilterOptions = new FilterOptions();
+
+            ResetCaptureVideoSettings();
+        }
+
+        internal void ResetCaptureVideoSettings()
+        {
+            m_CaptureVideoSettings = new VideoSettings
+            {
+                TimeLimitEnabled = false,
+                BitRateEnabled = false,
+                DisplayIdEnabled = false,
+                VideoSizeEnabled = false,
+
+                TimeLimit = 180,
+                BitRateK = 20000,
+                VideoSizeX = 1280,
+                VideoSizeY = 720,
+                DisplayId = string.Empty
+            };
         }
 
         internal static AndroidLogcatUserSettings Load(string path)
