@@ -3,10 +3,11 @@ using System.IO;
 using System.Text.RegularExpressions;
 using UnityEngine;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Unity.Android.Logcat
 {
-    internal class AndroidLogcatUtilities
+    internal static class AndroidLogcatUtilities
     {
         internal static readonly string kAbiArm64 = "arm64-v8a";
         internal static readonly string kAbiArmV7 = "armeabi-v7a";
@@ -172,7 +173,7 @@ namespace Unity.Android.Logcat
             return string.Empty;
         }
 
-        public static string GetPackageNameFromPid(AndroidBridge.ADB adb, IAndroidLogcatDevice device, int processId)
+        public static string GetProcessNameFromPid(AndroidBridge.ADB adb, IAndroidLogcatDevice device, int processId)
         {
             if (device == null)
                 return string.Empty;
@@ -183,13 +184,13 @@ namespace Unity.Android.Logcat
                 string cmd = string.Format("-s {0} shell ps -p {1}", device.Id, processId);
 
                 AndroidLogcatInternalLog.Log("{0} {1}", adb.GetADBPath(), cmd);
-                var output = adb.Run(new[] { cmd }, "Unable to get the package name for pid " + processId);
+                var output = adb.Run(new[] { cmd }, "Unable to get the process name for pid " + processId);
                 if (string.IsNullOrEmpty(output))
                     return string.Empty;
 
                 var result = ProcessOutputFromPS(output);
                 if (string.IsNullOrEmpty(result))
-                    AndroidLogcatInternalLog.Log("Unable to get the package name for pid " + processId + "\nOutput:\n" + output);
+                    AndroidLogcatInternalLog.Log("Unable to get the process name for pid " + processId + "\nOutput:\n" + output);
                 return result;
             }
             catch (Exception ex)
@@ -398,13 +399,12 @@ namespace Unity.Android.Logcat
         /// <param name="symbolPath"></param>
         /// <param name="libraryFile"></param>
         /// <returns></returns>
-        internal static string GetSymbolFile(string symbolPath, string libraryFile)
+        internal static string GetSymbolFile(string symbolPath, string libraryFile, string[] extensionsToTry)
         {
             var fullPath = Path.GetFullPath(Path.Combine(symbolPath, libraryFile));
             if (File.Exists(fullPath))
                 return fullPath;
 
-            var extensionsToTry = new[] { ".sym.so", ".dbg.so" };
             foreach (var e in extensionsToTry)
             {
                 // Try sym.so extension
@@ -416,7 +416,7 @@ namespace Unity.Android.Logcat
             return string.Empty;
         }
 
-        internal static string GetSymbolFile(IReadOnlyList<ReordableListItem> symbolPaths, string abi, string libraryFile)
+        internal static string GetSymbolFile(IReadOnlyList<ReordableListItem> symbolPaths, string abi, string libraryFile, string[] extensionsToTry)
         {
             foreach (var symbolPath in symbolPaths)
             {
@@ -425,12 +425,12 @@ namespace Unity.Android.Logcat
 
                 if (!string.IsNullOrEmpty(abi))
                 {
-                    var fileWithABI = GetSymbolFile(Path.Combine(symbolPath.Name, abi), libraryFile);
+                    var fileWithABI = GetSymbolFile(Path.Combine(symbolPath.Name, abi), libraryFile, extensionsToTry);
                     if (!string.IsNullOrEmpty(fileWithABI))
                         return fileWithABI;
                 }
 
-                var file = GetSymbolFile(symbolPath.Name, libraryFile);
+                var file = GetSymbolFile(symbolPath.Name, libraryFile, extensionsToTry);
                 if (!string.IsNullOrEmpty(file))
                     return file;
             }
@@ -505,7 +505,7 @@ namespace Unity.Android.Logcat
 
             logcat?.StripFilteredEntriesIfNeeded();
             logcat?.StripRawEntriesIfNeeded();
-            userSettings.CleanupDeadPackagesForDevice(selectedDevice, settings.MaxExitedPackagesToShow);
+            userSettings.CleanupDeadProcessesForDevice(selectedDevice, settings.MaxExitedPackagesToShow);
         }
 
         // When we use / in context menu, this creates submenu, which is no good
@@ -526,6 +526,11 @@ namespace Unity.Android.Logcat
             {
                 return false;
             }
+        }
+
+        internal static string[] GetEnabledValues(this IReadOnlyList<ReordableListItem> list)
+        {
+            return list.Where(i => i.Enabled).Select(i => i.Name).ToArray();
         }
     }
 }
