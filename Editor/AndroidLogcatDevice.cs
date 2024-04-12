@@ -8,6 +8,7 @@ namespace Unity.Android.Logcat
 {
     internal abstract class IAndroidLogcatDevice
     {
+        internal IAndroidLogcatActivityManager m_ActivityManager;
         internal static Regex kNetworkDeviceRegex = new Regex(@"^.*:\d{1,5}$");
 
         private DeviceState m_State;
@@ -31,6 +32,8 @@ namespace Unity.Android.Logcat
         // 3) '--regex'
         internal static readonly Version kAndroidVersion70 = new Version(7, 0);
 
+        internal IAndroidLogcatActivityManager ActivityManager => m_ActivityManager;
+
         internal abstract int APILevel { get; }
 
         internal abstract string Manufacturer { get; }
@@ -47,20 +50,39 @@ namespace Unity.Android.Logcat
 
         internal abstract string ShortDisplayName { get; }
 
+        protected abstract string GetTagPriorityAsString(string tag);
+
+        protected abstract void SetTagPriorityAsString(string tag, string priority);
+
+        internal Priority GetTagPriority(string tag)
+        {
+            var output = GetTagPriorityAsString(tag);
+            // Note: output can be just \r\n (Happened on Google Pixel 2 Android 10)
+            if (string.IsNullOrEmpty(output) || string.IsNullOrEmpty(output.Trim()))
+                return Priority.Verbose;
+
+            if (Enum.TryParse(output, true, out Priority priority))
+                return priority;
+            else
+            {
+                AndroidLogcatInternalLog.Log($"Failed to parse tag '{tag}' priority: {output}");
+                return Priority.Verbose;
+            }
+        }
+
+        internal void SetTagPriority(string tag, Priority priority)
+        {
+            SetTagPriorityAsString(tag, priority.ToString());
+        }
+
         internal virtual void SendKeyAsync(AndroidLogcatDispatcher dispatcher, AndroidKeyCode keyCode, bool longPress) { }
 
         internal void SendKeyAsync(AndroidLogcatDispatcher dispatcher, AndroidKeyCode keyCode) { SendKeyAsync(dispatcher, keyCode, false); }
 
         internal virtual void SendTextAsync(AndroidLogcatDispatcher dispatcher, string text) { }
 
-        internal virtual void StartOrResumePackage(string packageName, string activityName = null) { }
-
-        internal virtual void StopPackage(string packageName) { }
-
-        internal virtual void CrashPackage(string packageName) { }
-
         internal virtual void UninstallPackage(string packageName) { }
-
+        internal virtual void KillProcess(int processId, PosixSignal signal = PosixSignal.SIGNONE) { }
         internal virtual void KillProcess(string packageName, int processId, PosixSignal signal = PosixSignal.SIGNONE) { }
 
         internal bool SupportsFilteringByPid
@@ -91,9 +113,11 @@ namespace Unity.Android.Logcat
             m_State = state;
         }
 
-        internal IAndroidLogcatDevice()
+        internal IAndroidLogcatDevice(IAndroidLogcatActivityManager activityManager)
         {
             m_State = DeviceState.Unknown;
+            m_ActivityManager = activityManager;
+
         }
     }
 
@@ -107,6 +131,7 @@ namespace Unity.Android.Logcat
 
 
         internal AndroidLogcatDevice(AndroidBridge.ADB adb, string deviceId)
+            : base(new AndroidLogcatActivityManager(adb, deviceId))
         {
             m_ADB = adb;
             m_Id = deviceId;
@@ -218,6 +243,24 @@ namespace Unity.Android.Logcat
                 else
                     return shortName;
             }
+        }
+
+        protected override string GetTagPriorityAsString(string tag)
+        {
+            if (m_Device == null || State != DeviceState.Connected)
+                return string.Empty;
+
+            var args = $"shell getprop log.tag.{tag}";
+            var output = m_ADB.Run(new[] { args }, $"Failed to get priority for tag '{tag}'");
+            return output;
+        }
+
+        protected override void SetTagPriorityAsString(string tag, string priority)
+        {
+            if (m_Device == null || State != DeviceState.Connected)
+                return;
+            var args = $"shell setprop log.tag.{tag} {priority}";
+            m_ADB.Run(new[] { args }, $"Failed to set priority '{priority}' for tag '{tag}'");
         }
 
         /// <summary>
@@ -374,72 +417,6 @@ namespace Unity.Android.Logcat
             false);
         }
 
-        internal override void StartOrResumePackage(string packageName, string activityName = null)
-        {
-            var args = new List<string>();
-            args.AddRange(new[]
-            {
-                "-s",
-                Id,
-                "shell",
-             });
-
-            if (activityName == null)
-            {
-                args.AddRange(new[]
-                {
-                    "monkey",
-                    $"-p {packageName}",
-                    "-c android.intent.category.LAUNCHER 1"
-                 });
-            }
-            else
-            {
-                args.AddRange(new[]
-                {
-                    "am",
-                    "start",
-                    $"-n \"{packageName}/{activityName}\""
-                });
-            }
-
-            AndroidLogcatInternalLog.Log($"adb {string.Join(" ", args)}");
-
-            m_ADB.Run(args.ToArray(), $"Failed to start package '{packageName}'");
-        }
-
-        internal override void StopPackage(string packageName)
-        {
-            var args = new[]
-            {
-                "-s",
-                Id,
-                "shell",
-                "am",
-                "force-stop",
-                packageName
-             };
-            AndroidLogcatInternalLog.Log($"adb {string.Join(" ", args)}");
-
-            m_ADB.Run(args, $"Failed to stop package '{packageName}'");
-        }
-
-        internal override void CrashPackage(string packageName)
-        {
-            var args = new[]
-            {
-                "-s",
-                Id,
-                "shell",
-                "am",
-                "crash",
-                packageName
-             };
-            AndroidLogcatInternalLog.Log($"adb {string.Join(" ", args)}");
-
-            m_ADB.Run(args, $"Failed to crash package '{packageName}'");
-        }
-
         internal override void UninstallPackage(string packageName)
         {
             var args = new[]
@@ -454,6 +431,12 @@ namespace Unity.Android.Logcat
             m_ADB.Run(args, $"Failed to uninstall package '{packageName}'");
         }
 
+        internal override void KillProcess(int processId, PosixSignal signal = PosixSignal.SIGNONE)
+        {
+            var packageName = AndroidLogcatUtilities.GetProcessNameFromPid(m_ADB, this, processId);
+            if (!string.IsNullOrEmpty(packageName))
+                KillProcess(packageName, processId, signal);
+        }
 
         internal override void KillProcess(string packageName, int processId, PosixSignal signal = PosixSignal.SIGNONE)
         {

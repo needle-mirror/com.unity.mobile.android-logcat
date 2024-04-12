@@ -1,7 +1,7 @@
 {
   "name": "com.unity.mobile.android-logcat",
   "displayName": "Android Logcat",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "unity": "2021.3",
   "description": "Android Logcat package provides support for:\n - Android log messages\n - Android application memory statistics\n - Input injection\n - Android Screen Capture\n - Android Screen Recorder\n - Stacktrace Utility\n\nClick the 'View documentation' link above for more information.\n\nThe window can be accessed in Unity Editor via 'Window > Analysis > Android Logcat', or simply by pressing 'Alt+6' on Windows or 'Option+6' on macOS. \n\nMake sure to have Android module loaded and switch to Android build target in 'Build Settings' window if the menu doesn't exist.",
   "keywords": [
@@ -11,15 +11,15 @@
   ],
   "dependencies": {},
   "_upm": {
-    "changelog": "### Fixes & Improvements\n - Fix stacktrace resolve regex for entry like '  #15  pc 0x0000000000a0de84  /data/app/com.DefaultCompany.NativeRuntimeException1-eStyrW-dxxC0QfRH6veLhA==/lib/arm64/libunity.so'. Reset regex to apply the fix\n - Added inputs window - Tools->Window->Inputs, where you can easily inject keyboard/text input on to android device.\n - Add Scroll option for messages which allows you to explicitly to always scroll to end without automatic logic.\n - Device selection dropdown will contain device name + id, if device name is not available, only id will be displayed.\n - You can now specify symbol file extensions in the new settings, Preferences->Android Logcat Settings> Symbol Extensions. Stacktrace Utility tool uses the symbol file extensions while looking for symbols to resolve stacktraces."
+    "changelog": "### Fixes & Improvements\n - Logcat package now detects if the logs with a specific tag are disabled on a device (this was causing messages not to be displayed), and if so, displays a message with an option to fix such behavior.\n - Fixed an issue with MemoryWindow, where active package would get lost during domain reload.\n - Improved internal log to handle a large amount of messages.\n - Fixed an issue where logcat dispatcher would stop responding during domain reload.\n - Fixed an issue where MemoryWindow would fail to query memory stats using package name. It now uses process id instead.\n - Added Process Manager control which you can use to terminate an application or send a trim memory event.\n - Fixed tag filtering, previously logcat would check if incoming_tag contains tag_in_filter, now it will perform incoming_tag equals tag_in_filter. That way it's easier to filter messages with tags which have the same begining."
   },
   "upmCi": {
-    "footprint": "8c71367b5a9b1e5fee5517667db927480c955f93"
+    "footprint": "9ac35ce8b3b9ed6b209c0fd42aa7041e58685885"
   },
   "documentationUrl": "https://docs.unity3d.com/Packages/com.unity.mobile.android-logcat@1.4/manual/index.html",
   "repository": {
     "url": "https://github.com/Unity-Technologies/com.unity.mobile.logcat.git",
     "type": "git",
-    "revision": "a2d1d8c5dc68f439704c5b0d43f92b53c4e19193"
+    "revision": "d9514647440dd839af56d46ee77717919a41b302"
   }
 }
