@@ -1,15 +1,18 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.RegularExpressions;
-using UnityEditor.Android;
+using UnityEngine;
 
 namespace Unity.Android.Logcat
 {
     internal abstract class IAndroidLogcatDevice
     {
         internal IAndroidLogcatActivityManager m_ActivityManager;
-        internal static Regex kNetworkDeviceRegex = new Regex(@"^.*:\d{1,5}$");
+        internal readonly Regex kNetworkDeviceRegex = new Regex(@"^.*:\d{1,5}$");
+        static readonly Regex DisplaySizeRegex = new Regex(@"Physical size: (?<x>\d+)x(?<y>\d+)");
+        static readonly Regex OverridenDisplaySizeRegex = new Regex(@"Override size: (?<x>\d+)x(?<y>\d+)");
 
         private DeviceState m_State;
         internal enum DeviceConnectionType
@@ -47,6 +50,29 @@ namespace Unity.Android.Logcat
         internal abstract string Id { get; }
 
         internal abstract string DisplayName { get; }
+
+        internal abstract void QueryDisplaySize(out Vector2 displaySize, out Vector2? overridenDisplaySize);
+
+        protected void ParseDisplaySize(string input, out Vector2 displaySize, out Vector2? overridenDisplaySize)
+        {
+            displaySize = Vector2.zero;
+            overridenDisplaySize = null;
+            var result = DisplaySizeRegex.Match(input);
+            if (result.Success)
+            {
+                displaySize.x = int.Parse(result.Groups["x"].Value, CultureInfo.InvariantCulture);
+                displaySize.y = int.Parse(result.Groups["y"].Value, CultureInfo.InvariantCulture);
+            }
+
+            result = OverridenDisplaySizeRegex.Match(input);
+            if (result.Success)
+            {
+                Vector2 v = new Vector2();
+                v.x = int.Parse(result.Groups["x"].Value, CultureInfo.InvariantCulture);
+                v.y = int.Parse(result.Groups["y"].Value, CultureInfo.InvariantCulture);
+                overridenDisplaySize = v;
+            }
+        }
 
         internal abstract string ShortDisplayName { get; }
 
@@ -128,8 +154,6 @@ namespace Unity.Android.Logcat
         private AndroidBridge.ADB m_ADB;
         private Version m_Version;
         private string m_DisplayName;
-
-
         internal AndroidLogcatDevice(AndroidBridge.ADB adb, string deviceId)
             : base(new AndroidLogcatActivityManager(adb, deviceId))
         {
@@ -231,6 +255,20 @@ namespace Unity.Android.Logcat
                     return m_DisplayName;
                 }
             }
+        }
+
+        internal override void QueryDisplaySize(out Vector2 displaySize, out Vector2? overridenDisplaySize)
+        {
+            overridenDisplaySize = null;
+            displaySize = Vector2.zero;
+            if (m_Device == null || State != DeviceState.Connected)
+                return;
+
+            // Don't cache display size, since it can change, for ex., foldabales devices
+            var args = $"-s {Id} shell wm size";
+            var output = m_ADB.Run(new[] { args }, $"Failed to get display size");
+            AndroidLogcatInternalLog.Log($"adb {string.Join(" ", args)}\n{output}");
+            ParseDisplaySize(output, out displaySize, out overridenDisplaySize);
         }
 
         internal override string ShortDisplayName
