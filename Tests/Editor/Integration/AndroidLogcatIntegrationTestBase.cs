@@ -7,10 +7,12 @@ using System.Collections;
 using System.IO;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Text;
 
 internal class AndroidLogcatIntegrationTestBase
 {
-    protected const float kDefaulTimeOut = 10.0f;
+    protected const float kDefaultTimeout = 30.0f;
     private AndroidLogcatRuntime m_Runtime;
     private IAndroidLogcatDevice m_Device;
     private int m_Ticks;
@@ -20,12 +22,75 @@ internal class AndroidLogcatIntegrationTestBase
 
     public int GetTicks() => m_Ticks;
 
+    // On these agents adb's forward is created beside the device rather than beside
+    // the Editor, so connecting to the loopback is refused however healthy
+    // 'adb forward --list' looks. The device is reached instead at its own address,
+    // through a port the platform maps for us - and that mapping points at a fixed
+    // port on the far side, which is the one the forward has to ask for here.
+    const int kMappedLocalPort = 27183;
+    const string kMappedPortUrl = "https://api.platform-env.ds.unity3d.com/mappedPort";
+
+    /// <summary>
+    /// Points the live stream at the device the way the agents reach it. Does nothing
+    /// off a build agent, where adb's forward is on the loopback like anywhere else.
+    /// Every test that starts the live stream needs it.
+    /// </summary>
+    protected void ConfigureLiveStreamTunnel()
+    {
+        var deviceId = Environment.GetEnvironmentVariable("BOKKEN_DEVICE_ID");
+        var deviceIp = Environment.GetEnvironmentVariable("BOKKEN_DEVICE_IP");
+        if (string.IsNullOrEmpty(deviceId) || string.IsNullOrEmpty(deviceIp))
+            return;
+
+        int mappedPort;
+        try
+        {
+            mappedPort = QueryMappedPort(deviceId);
+        }
+        catch (Exception ex)
+        {
+            Assert.Fail($"Failed to ask {kMappedPortUrl} which port is mapped to device '{deviceId}': {ex.Message}");
+            return;
+        }
+
+        Runtime.LiveStream.ForwardLocalPort = kMappedLocalPort;
+        Runtime.LiveStream.TunnelHost = deviceIp;
+        Runtime.LiveStream.TunnelPort = mappedPort;
+        Console.WriteLine($"Live stream tunnel: forwarding tcp:{kMappedLocalPort}, connecting to {deviceIp}:{mappedPort}");
+    }
+
+    static int QueryMappedPort(string deviceId)
+    {
+        var request = (HttpWebRequest)WebRequest.Create(kMappedPortUrl);
+        request.Method = "POST";
+        request.Headers["Authorization"] = "Bearer bokken";
+        request.ContentType = "text/plain";
+
+        var body = Encoding.UTF8.GetBytes(deviceId);
+        request.ContentLength = body.Length;
+        using (var stream = request.GetRequestStream())
+            stream.Write(body, 0, body.Length);
+
+        string answer;
+        using (var response = (HttpWebResponse)request.GetResponse())
+        using (var reader = new StreamReader(response.GetResponseStream()))
+            answer = reader.ReadToEnd().Trim();
+
+        if (!int.TryParse(answer, out var port) || port <= 0)
+            throw new Exception($"Expected a port number, got '{answer}'");
+        return port;
+    }
+
     /// <summary>
     /// Used to measure Editor ticking. Since Time.frameCount doesn't increase while running editor tests
     /// </summary>
     private void Tick()
     {
         m_Ticks++;
+
+        // Frames are decoded where they are drawn, and in a test nothing draws. The
+        // live stream tests wait on the texture, so this stands in for the window.
+        m_Runtime?.LiveStream?.ApplyPendingFrame();
     }
 
     [OneTimeSetUp]
@@ -60,6 +125,109 @@ internal class AndroidLogcatIntegrationTestBase
             throw new Exception("No Android Device connected?");
     }
 
+    /// <summary>
+    /// A device that has dozed off composes nothing, so a mirrored display hands over
+    /// no frames, which surfaces as a test timing out for reasons that have nothing to
+    /// do with the code under test. Waking
+    /// it is part of putting the device in a known state, and it is cheap enough to do
+    /// per test rather than once per fixture.
+    /// </summary>
+    [SetUp]
+    protected void PrepareDevice()
+    {
+        if (m_Device == null)
+            return;
+
+        m_Device.WakeUp();
+
+        // Waking only lights the screen up, and a device left on its lock screen
+        // ignores Home and Overview entirely - so a test that expects the screen to
+        // change sees nothing move. Devices here have no secure lock, where this
+        // dismisses the keyguard outright.
+        RunAdb("Failed to dismiss the lock screen", "shell", "wm", "dismiss-keyguard");
+
+        // Cleared so that what the teardown collects is this test's log and not the
+        // one before it.
+        RunAdb("Failed to clear the device log", "logcat", "-c");
+    }
+
+    /// <summary>
+    /// What the device had to say and what it looked like when the test ended, kept as
+    /// artifacts. A failing live stream test says little by itself - the server writes
+    /// what went wrong on the device side to logcat, and the screen shows what the
+    /// device was actually doing. Both are gone by the time anyone looks.
+    /// <para>
+    /// Nothing in here throws or logs an error: a teardown that fails would bury
+    /// whatever the test was failing on.
+    /// </para>
+    /// </summary>
+    [TearDown]
+    protected void CollectDeviceState()
+    {
+        if (m_Device == null)
+            return;
+
+        var name = AndroidLogcatUtilities.SanitizeFileName(TestContext.CurrentContext.Test.Name);
+
+        try
+        {
+            CollectLogcat(name);
+            CollectScreenshot(name);
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to collect the device state: {ex}");
+        }
+    }
+
+    private void CollectLogcat(string name)
+    {
+        var log = RunAdb("Failed to read the device log", "logcat", "-d");
+        if (!string.IsNullOrEmpty(log))
+            ReportArtifact($"{name}-logcat.txt", log);
+    }
+
+    /// <summary>
+    /// Captured here rather than with <see cref="AndroidLogcatUtilities.CaptureScreen"/>,
+    /// which reports its failures with <c>Debug.LogError</c> - and an unexpected error
+    /// log fails the test that is being torn down.
+    /// </summary>
+    private void CollectScreenshot(string name)
+    {
+        const string onDevice = "/sdcard/unity-logcat-test-screen.png";
+        // A path nothing has written, so the file being there afterwards means this
+        // capture worked rather than an earlier one having left something behind.
+        var path = ArtifactPath($"{name}-screen.png");
+
+        var capture = RunAdb("Failed to capture the screen", "shell", $"screencap -p {onDevice}");
+        var pull = RunAdb("Failed to pull the screenshot", "pull", onDevice, path);
+        SafeDeleteOnDevice(m_Device, onDevice);
+
+        if (File.Exists(path))
+            return;
+
+        ReportArtifact("failed_to_capture_screenshot.txt",
+            $"{name}{Environment.NewLine}{capture}{Environment.NewLine}{pull}");
+    }
+
+    /// <summary>
+    /// Runs adb against the device under test. Never throws: this is housekeeping
+    /// around a test, and a device that will not answer should not be reported as the
+    /// test failing.
+    /// </summary>
+    private string RunAdb(string failureMessage, params string[] args)
+    {
+        try
+        {
+            return m_Runtime.Tools.ADB.Run(new[] { $"-s {m_Device.Id}" }.Concat(args).ToArray(), failureMessage);
+        }
+        catch (Exception ex)
+        {
+            Log($"{failureMessage}: {ex.Message}");
+            return null;
+        }
+    }
+
     [OneTimeTearDown]
     protected void ShutdownRuntime()
     {
@@ -88,7 +256,7 @@ internal class AndroidLogcatIntegrationTestBase
 #endif
     }
 
-    protected IEnumerator WaitForCondition(string name, Func<bool> condition, float timeOutInSeconds = kDefaulTimeOut, Func<string> additionalErrorMessage = null)
+    protected IEnumerator WaitForCondition(string name, Func<bool> condition, float timeOutInSeconds = kDefaultTimeout, Func<string> additionalErrorMessage = null)
     {
         m_Runtime.OnUpdate();
 
@@ -112,6 +280,66 @@ internal class AndroidLogcatIntegrationTestBase
     protected static void Log(string message)
     {
         Debug.LogFormat(LogType.Log, LogOption.NoStacktrace, null, "{0}", message);
+    }
+
+    /// <summary>
+    /// Waits out a stretch of time, for what cannot be watched for directly: a screen
+    /// settling after an app opens, a device falling asleep, a recording running long
+    /// enough to be worth stopping.
+    /// </summary>
+    protected IEnumerator WaitFor(double seconds, string what)
+    {
+        var start = DateTime.Now;
+        return WaitForCondition(what, () => (DateTime.Now - start).TotalSeconds > seconds);
+    }
+
+    /// <summary>
+    /// Saves something into this test's artifacts folder, which Yamato collects and a
+    /// local run leaves behind to look at. A frame count only says the screen changed;
+    /// the picture says what it changed to.
+    /// </summary>
+    protected static void ReportArtifact(string fileName, Texture2D texture)
+    {
+        ReportArtifact(fileName, texture.EncodeToPNG());
+    }
+
+    protected static void ReportArtifact(string fileName, byte[] contents)
+    {
+        File.WriteAllBytes(ArtifactPath(fileName), contents);
+    }
+
+    protected static void ReportArtifact(string fileName, string contents)
+    {
+        File.WriteAllText(ArtifactPath(fileName), contents);
+    }
+
+    /// <summary>
+    /// A path in the artifacts folder that nothing has written yet, numbered from the
+    /// first one: "frame_0.png", then "frame_1.png" and so on. A test that runs more
+    /// than once into the same folder - a rerun, or two editor versions - keeps every
+    /// attempt rather than the last one.
+    /// </summary>
+    protected static string ArtifactPath(string fileName)
+    {
+        var directory = GetOrCreateArtifactsPath();
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+
+        for (var i = 0; ; i++)
+        {
+            var path = Path.Combine(directory, $"{name}_{i}{extension}");
+            if (!File.Exists(path))
+                return path;
+        }
+    }
+
+    /// <summary>
+    /// The same, for something already written to disk - a screenshot or a recording
+    /// the code under test produced.
+    /// </summary>
+    protected static void CopyToArtifacts(string fileName, string sourcePath)
+    {
+        File.Copy(sourcePath, ArtifactPath(fileName));
     }
 
     protected static string GetOrCreateArtifactsPath()

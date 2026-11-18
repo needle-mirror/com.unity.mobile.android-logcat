@@ -7,6 +7,46 @@ using UnityEngine;
 
 namespace Unity.Android.Logcat
 {
+    /// <summary>
+    /// How the device's screen is rotated. The numbers are Android's own
+    /// Surface.ROTATION_* values, which is what the user_rotation setting takes.
+    /// </summary>
+    internal enum AndroidDeviceRotation
+    {
+        Auto = -1,
+        Rotate0 = 0,
+        Rotate90 = 1,
+        Rotate180 = 2,
+        Rotate270 = 3
+    }
+
+    /// <summary>
+    /// The states a foldable reports to Android, as `cmd device_state print-states`
+    /// lists them. Their numbers are the device's own, so they are asked for rather
+    /// than assumed.
+    /// </summary>
+    internal readonly struct FoldStates
+    {
+        internal static readonly FoldStates None = new FoldStates(-1, -1, -1);
+
+        internal readonly int Folded;
+        internal readonly int Half;
+        internal readonly int Unfolded;
+
+        internal FoldStates(int folded, int half, int unfolded)
+        {
+            Folded = folded;
+            Half = half;
+            Unfolded = unfolded;
+        }
+
+        /// <summary>Folded and unfolded are what a foldable has to report to be one.</summary>
+        internal bool Supported => Folded >= 0 && Unfolded >= 0;
+
+        /// <summary>Half open is a state of its own on some devices, and absent on others.</summary>
+        internal bool HasHalf => Half >= 0;
+    }
+
     internal abstract class IAndroidLogcatDevice
     {
         internal IAndroidLogcatActivityManager m_ActivityManager;
@@ -52,6 +92,48 @@ namespace Unity.Android.Logcat
         internal abstract string DisplayName { get; }
 
         internal abstract void QueryDisplaySize(out Vector2 displaySize, out Vector2? overridenDisplaySize);
+
+        /// <summary>
+        /// Wakes the device's screen. A display that is off composes nothing, so
+        /// anything that reads the screen - a mirrored display, screenrecord - gets
+        /// nothing at all out of a sleeping device.
+        /// <para>
+        /// Only a wake: a lock screen stays up, and streams perfectly well, because it
+        /// composes like any other screen. Best effort, too - a device that will not
+        /// take it is not an error, since it may well be showing something already.
+        /// </para>
+        /// </summary>
+        internal abstract void WakeUp();
+
+        /// <summary>
+        /// Puts the device's screen to sleep, the counterpart of <see cref="WakeUp"/>
+        /// and best effort in the same way.
+        /// </summary>
+        internal abstract void Sleep();
+
+        /// <summary>
+        /// Rotates the device's screen, or with <see cref="AndroidDeviceRotation.Auto"/>
+        /// hands the rotation back to the accelerometer.
+        /// </summary>
+        internal abstract void SetRotation(AndroidDeviceRotation rotation);
+
+        /// <summary>
+        /// Which states this device folds between, or <see cref="FoldStates.None"/>
+        /// for a device that does not fold.
+        /// </summary>
+        internal abstract FoldStates QueryFoldStates();
+
+        /// <summary>
+        /// The size of each of the device's own screens, on or off - both of a
+        /// foldable's, say. Empty when it cannot be told.
+        /// </summary>
+        internal abstract IReadOnlyList<Vector2Int> QueryPhysicalDisplaySizes();
+
+        /// <summary>
+        /// Holds the device in one of the states <see cref="QueryFoldStates"/> reports.
+        /// A negative identifier hands it back to the device's own sensors.
+        /// </summary>
+        internal abstract void SetDeviceState(int identifier);
 
         protected void ParseDisplaySize(string input, out Vector2 displaySize, out Vector2? overridenDisplaySize)
         {
@@ -111,6 +193,16 @@ namespace Unity.Android.Logcat
         internal virtual void KillProcess(int processId, PosixSignal signal = PosixSignal.SIGNONE) { }
         internal virtual void KillProcess(string packageName, int processId, PosixSignal signal = PosixSignal.SIGNONE) { }
 
+        /// <summary>
+        /// Runs an arbitrary adb command against this device asynchronously.
+        /// The device is targeted with -s automatically unless the caller already specified one.
+        /// <paramref name="onComplete"/> is invoked on the main thread.
+        /// </summary>
+        internal virtual void RunAdbCommandAsync(AndroidLogcatDispatcher dispatcher, string arguments, Action<AndroidLogcatCommandResult> onComplete)
+        {
+            onComplete?.Invoke(AndroidLogcatCommandResult.CreateFailure(arguments, "No device selected."));
+        }
+
         internal bool SupportsFilteringByPid
         {
             get { return OSVersion >= kAndroidVersion70; }
@@ -154,6 +246,7 @@ namespace Unity.Android.Logcat
         private AndroidBridge.ADB m_ADB;
         private Version m_Version;
         private string m_DisplayName;
+
         internal AndroidLogcatDevice(AndroidBridge.ADB adb, string deviceId)
             : base(new AndroidLogcatActivityManager(adb, deviceId))
         {
@@ -255,6 +348,174 @@ namespace Unity.Android.Logcat
                     return m_DisplayName;
                 }
             }
+        }
+
+        internal override void WakeUp() => SendPowerKey("KEYCODE_WAKEUP", "Failed to wake the device");
+
+        internal override void Sleep() => SendPowerKey("KEYCODE_SLEEP", "Failed to put the device to sleep");
+
+        void SendPowerKey(string keyCode, string failureMessage)
+        {
+            if (m_Device == null || State != DeviceState.Connected)
+                return;
+
+            var args = $"-s {Id} shell input keyevent {keyCode}";
+            try
+            {
+                var output = m_ADB.Run(new[] { args }, failureMessage);
+                AndroidLogcatInternalLog.Log($"adb {args}\n{output}");
+            }
+            catch (Exception ex)
+            {
+                AndroidLogcatInternalLog.Log(ex.Message);
+            }
+        }
+
+        // identifier=0, name='CLOSED' - one line of `cmd device_state print-states`.
+        static readonly Regex DeviceStateRegex =
+            new Regex(@"identifier=(?<id>\d+), name='(?<name>[^']+)'");
+
+        internal override FoldStates QueryFoldStates()
+        {
+            if (m_Device == null || State != DeviceState.Connected)
+                return FoldStates.None;
+
+            string output;
+            try
+            {
+                output = m_ADB.Run(new[] { $"-s {Id}", "shell", "cmd", "device_state", "print-states" },
+                    "Failed to query the device's states");
+            }
+            catch (Exception ex)
+            {
+                // Every device without the service answers this way, so it is not an
+                // error - it is how a device says it does not fold.
+                AndroidLogcatInternalLog.Log($"Failed to query the device's states: {ex.Message}");
+                return FoldStates.None;
+            }
+
+            var folded = -1;
+            var half = -1;
+            var unfolded = -1;
+            foreach (Match match in DeviceStateRegex.Matches(output))
+            {
+                var name = match.Groups["name"].Value.ToUpperInvariant();
+                var id = int.Parse(match.Groups["id"].Value, CultureInfo.InvariantCulture);
+
+                // Matched by name, because the numbers differ between devices. Half
+                // open is checked first: its name holds OPEN as well.
+                if (half < 0 && name.Contains("HALF"))
+                    half = id;
+                else if (folded < 0 && name.Contains("CLOS"))
+                    folded = id;
+                else if (unfolded < 0 && name.Contains("OPEN"))
+                    unfolded = id;
+            }
+
+            return new FoldStates(folded, half, unfolded);
+        }
+
+        // DisplayDeviceInfo{"Inner Display": uniqueId="local:46...", 2076 x 2152, ... - one
+        // line of `dumpsys display` per screen, the screen's own size whether on or off.
+        static readonly Regex PhysicalDisplayRegex =
+            new Regex(@"DisplayDeviceInfo\{""[^""]*"": uniqueId=""[^""]*"", (?<w>\d+) x (?<h>\d+)");
+
+        internal override IReadOnlyList<Vector2Int> QueryPhysicalDisplaySizes()
+        {
+            var sizes = new List<Vector2Int>();
+            if (m_Device == null || State != DeviceState.Connected)
+                return sizes;
+
+            string output;
+            try
+            {
+                output = m_ADB.Run(new[] { $"-s {Id}", "shell", "dumpsys", "display" },
+                    "Failed to query the device's displays");
+            }
+            catch (Exception ex)
+            {
+                AndroidLogcatInternalLog.Log($"Failed to query the device's displays: {ex.Message}");
+                return sizes;
+            }
+
+            foreach (var line in output.Split('\n'))
+            {
+                // Built in screens only: one plugged in or virtual is not what is streamed.
+                if (!line.Contains("type INTERNAL"))
+                    continue;
+                var match = PhysicalDisplayRegex.Match(line);
+                if (match.Success)
+                    sizes.Add(new Vector2Int(
+                        int.Parse(match.Groups["w"].Value, CultureInfo.InvariantCulture),
+                        int.Parse(match.Groups["h"].Value, CultureInfo.InvariantCulture)));
+            }
+            return sizes;
+        }
+
+        internal override void SetDeviceState(int identifier)
+        {
+            if (m_Device == null || State != DeviceState.Connected)
+                return;
+
+            var state = identifier < 0 ? "reset" : identifier.ToString(CultureInfo.InvariantCulture);
+            var args = $"-s {Id} shell cmd device_state state {state}";
+            AndroidLogcatInternalLog.Log($"adb {args}");
+            m_ADB.Run(new[] { args }, $"Failed to set the device state to '{state}'");
+        }
+
+        internal override void SetRotation(AndroidDeviceRotation rotation)
+        {
+            if (m_Device == null || State != DeviceState.Connected)
+                return;
+
+            // The window manager's own switch, which is what the settings below reach
+            // indirectly. Not on every Android version, hence the fallback.
+            if (SetRotationWithWindowManager(rotation))
+                return;
+
+            // user_rotation is only obeyed while auto rotation is off, so the two
+            // settings are one operation: turn the accelerometer off and pin the
+            // rotation, or turn it back on and leave the pinned value alone.
+            var auto = rotation == AndroidDeviceRotation.Auto;
+            PutSystemSetting("accelerometer_rotation", auto ? 1 : 0);
+            if (!auto)
+                PutSystemSetting("user_rotation", (int)rotation);
+        }
+
+        /// <summary>
+        /// <c>wm user-rotation free</c>, or <c>lock &lt;rotation&gt;</c>. It prints
+        /// nothing when it works, and "Unknown command" on a version without it.
+        /// </summary>
+        /// <returns>false when the command is unavailable or was refused.</returns>
+        bool SetRotationWithWindowManager(AndroidDeviceRotation rotation)
+        {
+            var mode = rotation == AndroidDeviceRotation.Auto
+                ? "free"
+                : $"lock {(int)rotation}";
+            var args = $"-s {Id} shell wm user-rotation {mode}";
+            AndroidLogcatInternalLog.Log($"adb {args}");
+
+            try
+            {
+                var output = m_ADB.Run(new[] { args }, "Failed to set the user rotation").Trim();
+                if (output.Length == 0)
+                    return true;
+
+                AndroidLogcatInternalLog.Log(output);
+            }
+            catch (Exception ex)
+            {
+                AndroidLogcatInternalLog.Log(ex.Message);
+            }
+
+            return false;
+        }
+
+        void PutSystemSetting(string name, int value)
+        {
+            var args = $"-s {Id} shell settings put system {name} {value}";
+            AndroidLogcatInternalLog.Log($"adb {args}");
+            m_ADB.Run(new[] { args }, $"Failed to set '{name}' to {value}");
         }
 
         internal override void QueryDisplaySize(out Vector2 displaySize, out Vector2? overridenDisplaySize)
@@ -469,6 +730,48 @@ namespace Unity.Android.Logcat
             AndroidLogcatInternalLog.Log($"adb {string.Join(" ", args)}");
 
             m_ADB.Run(args, $"Failed to uninstall package '{packageName}'");
+        }
+
+        /// <summary>
+        /// Runs an arbitrary adb command against this device on the dispatcher's worker thread, so a
+        /// slow or hanging command cannot block the Editor's main thread.
+        /// </summary>
+        internal override void RunAdbCommandAsync(AndroidLogcatDispatcher dispatcher, string arguments, Action<AndroidLogcatCommandResult> onComplete)
+        {
+            if (dispatcher == null)
+            {
+                onComplete?.Invoke(AndroidLogcatCommandResult.CreateFailure(arguments, "Dispatcher is not available."));
+                return;
+            }
+
+            // Target this device unless the caller already picked one explicitly.
+            var effectiveArgs = AndroidLogcatCommandParser.SpecifiesDevice(arguments)
+                ? arguments
+                : $"-s {Id} {arguments}";
+
+            dispatcher.Schedule(
+                new AndroidLogcatTaskInput<AndroidBridge.ADB, string, string>()
+                {
+                    data1 = m_ADB,
+                    data2 = effectiveArgs,
+                    data3 = arguments
+                },
+                (input) =>
+                {
+                    var inputData = (AndroidLogcatTaskInput<AndroidBridge.ADB, string, string>)input;
+                    AndroidLogcatInternalLog.Log($"adb {inputData.data2}");
+                    try
+                    {
+                        var output = inputData.data1.Run(new[] { inputData.data2 }, $"Failed to run 'adb {inputData.data3}'");
+                        return AndroidLogcatCommandResult.CreateSuccess(inputData.data3, output);
+                    }
+                    catch (Exception ex)
+                    {
+                        return AndroidLogcatCommandResult.CreateFailure(inputData.data3, AndroidLogcatCommandResult.Unwrap(ex).Message);
+                    }
+                },
+                (result) => onComplete?.Invoke((AndroidLogcatCommandResult)result),
+                false);
         }
 
         internal override void KillProcess(int processId, PosixSignal signal = PosixSignal.SIGNONE)

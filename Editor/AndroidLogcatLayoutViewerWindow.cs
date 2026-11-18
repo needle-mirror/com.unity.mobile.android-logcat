@@ -17,15 +17,14 @@ namespace Unity.Android.Logcat
             window.Show();
         }
 
-#if UNITY_2022_3_OR_NEWER
         const string Name = nameof(Name);
         const string Value = nameof(Value);
 
         class Styles
         {
-            public static GUIContent QueryUIHierarchy = new GUIContent("Query UI Layout");
-            public static GUIContent SaveUIHierarchy = new GUIContent("Save Layout");
-            public static GUIContent SaveScreenshot = new GUIContent("Save Screenshot");
+            public static readonly GUIContent QueryUIHierarchy = new GUIContent("Query UI Layout");
+            public static readonly GUIContent SaveUIHierarchy = new GUIContent("Save Layout");
+            public static readonly GUIContent SaveScreenshot = new GUIContent("Save Screenshot");
         }
 
         AndroidLogcatRuntimeBase m_Runtime;
@@ -49,7 +48,7 @@ namespace Unity.Android.Logcat
             m_Runtime = AndroidLogcatManager.instance.Runtime;
             m_Runtime.Closing += OnDisable;
             m_DeviceSelection = new AndroidLogcatDeviceSelection(m_Runtime, null, nameof(AndroidLogcatLayoutViewerWindow) + "_DeviceId");
-            m_CaptureScreenshot = m_Runtime.CaptureScreenshot;
+            m_CaptureScreenshot = m_Runtime.LayoutCaptureScreenshot;
             m_QueryLayout = m_Runtime.QueryLayout;
 
             LoadUI();
@@ -259,7 +258,7 @@ namespace Unity.Android.Logcat
         }
         private void DoScreenshotSaveAsGUI()
         {
-            var srcPath = m_CaptureScreenshot.GetImagePath(m_DeviceSelection.SelectedDevice);
+            var srcPath = m_CaptureScreenshot.GetLatestImagePath(m_DeviceSelection.SelectedDevice);
             EditorGUI.BeginDisabledGroup(string.IsNullOrEmpty(srcPath) || m_CaptureScreenshot.ImageTexture == null);
             if (GUILayout.Button(Styles.SaveScreenshot, AndroidLogcatStyles.toolbarButton))
             {
@@ -398,11 +397,5 @@ namespace Unity.Android.Logcat
             AndroidLogcatUtilities.DrawRectangle(rc, 3, Color.black);
             AndroidLogcatUtilities.DrawRectangle(rc, 2, Color.red);
         }
-#else
-        public void OnGUI()
-        {
-            EditorGUILayout.HelpBox("Layout Viewer requires Unity 2022.3 or higher.", MessageType.Error);
-        }
-#endif
     }
 }

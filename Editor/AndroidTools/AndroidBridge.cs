@@ -9,6 +9,7 @@ using Object = System.Object;
 #if UNITY_6000_5_OR_NEWER
 using UnityEngine.Assemblies;
 #endif
+using Unity.Scripting.LifecycleManagement;
 
 namespace Unity.Android.Logcat
 {
@@ -17,6 +18,7 @@ namespace Unity.Android.Logcat
     /// It solves the problem where if you have logcat package installed, but there's no Android Support installed, you won't get compiler errors
     /// It also enables to use Logcat package when active platform is not Android
     /// </summary>
+    [NoAutoStaticsCleanup]
     class AndroidBridge
     {
         enum ExtensionState
@@ -64,6 +66,7 @@ namespace Unity.Android.Logcat
 
         internal static bool AndroidExtensionsInstalled => AndroidExtensions != null;
 
+        [NoAutoStaticsCleanup]
         internal class ADB
         {
             private static Type s_ADBType;
@@ -146,6 +149,7 @@ namespace Unity.Android.Logcat
             }
         }
 
+        [NoAutoStaticsCleanup]
         internal class AndroidDevice
         {
             private static Type s_AndroidDeviceType;
@@ -207,11 +211,13 @@ namespace Unity.Android.Logcat
             public PropertiesTable Properties => new PropertiesTable(PropertiesPropertyInfo.GetValue(m_AndroidDeviceObject, null));
         }
 
+        [NoAutoStaticsCleanup]
         internal class AndroidExternalToolsSettings
         {
             private static Type s_AndroidExternalToolsSettingsType;
             private static PropertyInfo s_NdkRootPathProperty;
             private static PropertyInfo s_SdkRootPathProperty;
+            private static PropertyInfo s_JdkRootPathProperty;
 
             private static Type UnderlyingType
             {
@@ -251,6 +257,17 @@ namespace Unity.Android.Logcat
                 }
             }
 
+            private static PropertyInfo JdkRootPathProperty
+            {
+                get
+                {
+                    if (s_JdkRootPathProperty != null)
+                        return s_JdkRootPathProperty;
+                    s_JdkRootPathProperty = UnderlyingType.GetProperty("jdkRootPath");
+                    return s_JdkRootPathProperty;
+                }
+            }
+
             /// <summary>
             /// Matches to UnityEditor.Android.AndroidExternalToolsSettings.ndkRootPath
             /// </summary>
@@ -267,6 +284,15 @@ namespace Unity.Android.Logcat
             {
                 get => (string)SdkRootPathProperty.GetValue(null);
                 set => SdkRootPathProperty.SetValue(null, value);
+            }
+
+            /// <summary>
+            /// Matches to UnityEditor.Android.AndroidExternalToolsSettings.jdkRootPath
+            /// </summary>
+            public static string jdkRootPath
+            {
+                get => (string)JdkRootPathProperty.GetValue(null);
+                set => JdkRootPathProperty.SetValue(null, value);
             }
         }
     }

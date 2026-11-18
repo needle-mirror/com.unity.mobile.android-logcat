@@ -25,58 +25,34 @@ namespace Unity.Android.Logcat
         }
 
         [Serializable]
-        internal class VideoSettings
-        {
-            [SerializeField]
-            internal bool TimeLimitEnabled;
-            [SerializeField]
-            internal uint TimeLimit;
-            [SerializeField]
-            internal bool VideoSizeEnabled;
-            [SerializeField]
-            internal uint VideoSizeX;
-            [SerializeField]
-            internal uint VideoSizeY;
-            [SerializeField]
-            internal bool BitRateEnabled;
-            [SerializeField]
-            internal ulong BitRateK;
-            [SerializeField]
-            internal bool DisplayIdEnabled;
-            [SerializeField]
-            internal string DisplayId;
-        }
-
-        [Serializable]
         internal class ScreenCaptureSettings
         {
+            /// <summary>Width of the saved screenshot list, left of the splitter.</summary>
             [SerializeField]
-            internal AndroidLogcatScreenCaptureWindow.Mode Mode;
+            internal float CaptureListWidth;
             [SerializeField]
-            private string[] m_LastSaveLocation;
+            private string m_LastSaveLocation;
 
-            internal void SetLastSaveLocation(AndroidLogcatScreenCaptureWindow.Mode mode, string path)
+            /// <summary>
+            /// Saves a copy of a capture wherever the user picks, starting from where
+            /// they picked last time, and remembering where that was.
+            /// </summary>
+            internal void SaveFileAs(string path, string title)
             {
-                if (m_LastSaveLocation == null || (int)mode >= m_LastSaveLocation.Length)
-                    ResetLastSaveLocation();
-                m_LastSaveLocation[(int)mode] = path;
+                var directory = AndroidLogcatUtilities.SaveFileAs(path, title, LastSaveLocation);
+                if (directory != null)
+                    LastSaveLocation = directory;
             }
 
-            internal string GetLastSaveLocation(AndroidLogcatScreenCaptureWindow.Mode mode)
+            internal string LastSaveLocation
             {
-                if (m_LastSaveLocation == null || (int)mode >= m_LastSaveLocation.Length)
-                    ResetLastSaveLocation();
-                return m_LastSaveLocation[(int)mode];
-            }
-
-            internal void ResetLastSaveLocation()
-            {
-                var length = Enum.GetValues(typeof(AndroidLogcatScreenCaptureWindow.Mode)).Length;
-                var defaultDirectory = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-                m_LastSaveLocation = new string[length];
-                for (int i = 0; i < m_LastSaveLocation.Length; i++)
-                    m_LastSaveLocation[i] = defaultDirectory;
-
+                get
+                {
+                    if (string.IsNullOrEmpty(m_LastSaveLocation))
+                        m_LastSaveLocation = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+                    return m_LastSaveLocation;
+                }
+                set { m_LastSaveLocation = value; }
             }
         }
 
@@ -87,6 +63,15 @@ namespace Unity.Android.Logcat
             internal string LastLayoutSaveLocation;
             [SerializeField]
             internal string LastScreenshotSaveLocation;
+        }
+
+        [Serializable]
+        internal class CommandsSettingsData
+        {
+            [SerializeField]
+            internal List<AndroidLogcatCommandEntry> Favorites = new List<AndroidLogcatCommandEntry>();
+            [SerializeField]
+            internal List<AndroidLogcatCommandEntry> GeneralCommands = new List<AndroidLogcatCommandEntry>();
         }
 
         [SerializeField]
@@ -109,13 +94,13 @@ namespace Unity.Android.Logcat
         [SerializeField]
         private List<ReordableListItem> m_SymbolPaths;
         [SerializeField]
-        private VideoSettings m_CaptureVideoSettings;
-        [SerializeField]
         private ScreenCaptureSettings m_ScreenCaptureSettings;
         [SerializeField]
         private QueryLayoutSettings m_QueryLayoutSettings;
         [SerializeField]
         private InputSettings m_InputSettings;
+        [SerializeField]
+        private CommandsSettingsData m_CommandsSettings;
 
         [SerializeField]
         private AutoScroll m_AutoScroll;
@@ -174,10 +159,10 @@ namespace Unity.Android.Logcat
             }
         }
 
-        public VideoSettings CaptureVideoSettings { set => m_CaptureVideoSettings = value; get => m_CaptureVideoSettings; }
         public ScreenCaptureSettings CaptureSettings { set => m_ScreenCaptureSettings = value; get => m_ScreenCaptureSettings; }
         public QueryLayoutSettings LayoutSettings { set => m_QueryLayoutSettings = value; get => m_QueryLayoutSettings; }
         public InputSettings DeviceInputSettings { set => m_InputSettings = value; get => m_InputSettings; }
+        public CommandsSettingsData CommandsSettings { set => m_CommandsSettings = value; get => m_CommandsSettings; }
 
         public AutoScroll AutoScroll { set => m_AutoScroll = value; get => m_AutoScroll; }
 
@@ -350,7 +335,6 @@ namespace Unity.Android.Logcat
             m_FilterOptions = new FilterOptions();
             m_AutoScroll = AutoScroll.Auto;
 
-            ResetCaptureVideoSettings();
             ResetScreenCaptureSettings();
 
             m_QueryLayoutSettings = new QueryLayoutSettings();
@@ -360,32 +344,16 @@ namespace Unity.Android.Logcat
                 SendText = string.Empty,
                 TargetProcess = new ProcessInformation()
             };
-        }
 
-        internal void ResetCaptureVideoSettings()
-        {
-            m_CaptureVideoSettings = new VideoSettings
-            {
-                TimeLimitEnabled = false,
-                BitRateEnabled = false,
-                DisplayIdEnabled = false,
-                VideoSizeEnabled = false,
-
-                TimeLimit = 180,
-                BitRateK = 20000,
-                VideoSizeX = 1280,
-                VideoSizeY = 720,
-                DisplayId = string.Empty
-            };
+            m_CommandsSettings = new CommandsSettingsData();
         }
 
         internal void ResetScreenCaptureSettings()
         {
             m_ScreenCaptureSettings = new ScreenCaptureSettings
             {
-                Mode = AndroidLogcatScreenCaptureWindow.Mode.Screenshot
+                CaptureListWidth = AndroidLogcatCaptureList.kDefaultWidth
             };
-            m_ScreenCaptureSettings.ResetLastSaveLocation();
         }
 
         internal static AndroidLogcatUserSettings Load(string path)

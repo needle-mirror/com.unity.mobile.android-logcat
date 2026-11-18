@@ -1,8 +1,9 @@
 using System.Collections.Generic;
-using UnityEditor.Android;
+using Unity.Scripting.LifecycleManagement;
 
 namespace Unity.Android.Logcat
 {
+    [NoAutoStaticsCleanup]
     internal class AndroidLogcatSendTrimMemoryUsage
     {
         public string DisplayName { get; }

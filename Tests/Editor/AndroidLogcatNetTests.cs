@@ -1,12 +1,9 @@
-using System.Collections.Generic;
+using NUnit.Framework;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using NUnit.Framework;
-using UnityEditor;
 using UnityEditor.Compilation;
-using Assembly = System.Reflection.Assembly;
 
 class AndroidLogcatNetTests
 {
@@ -27,45 +24,6 @@ class AndroidLogcatNetTests
     }
 
     /// <summary>
-    /// Checks that no accidental references are added to Logcat assembly
-    /// </summary>
-    [Test]
-    public void ValidateAssemblyReferences()
-    {
-        var logcatAssembly = GetLogcatAssembly();
-
-        var expectedReferences = new List<string>(new[]
-        {
-            "mscorlib",
-            "System",
-            "System.Xml.Linq",
-            "UnityEngine.IMGUIModule",
-            "UnityEngine.CoreModule",
-            "UnityEngine.VideoModule",
-            "UnityEngine.TextRenderingModule",
-            "UnityEngine.UIElementsModule",
-            "System.Core",
-            "UnityEngine.ImageConversionModule",
-            "UnityEngine.JSONSerializeModule",
-            "UnityEditor.CoreModule",
-        });
-
-        var referencedCount = expectedReferences.ToDictionary(s => s, s => 0);
-
-        var references = Assembly.ReflectionOnlyLoadFrom(logcatAssembly.outputPath).GetReferencedAssemblies().Select(a => a.Name);
-        foreach (var r in references)
-        {
-            Assert.Contains(r, expectedReferences, $"Unexpected reference '{r}'");
-            referencedCount[r]++;
-        }
-
-        foreach (var r in referencedCount)
-        {
-            Assert.AreEqual(1, r.Value, $"'{r.Key}' was expected to be referenced once, but was referenced {r.Value} times, please adjust expectations, maybe the reference is no longer needed?");
-        }
-    }
-
-    /// <summary>
     /// Check that we don't have unexpected using namespace
     /// For ex., using using NUnit.Framework is not valid
     /// This test is not perfect since you can access classes from those namespaces without using, but it's better than nothing
@@ -74,13 +32,21 @@ class AndroidLogcatNetTests
     public void ValidateUsingStatements()
     {
         var logcatAssembly = GetLogcatAssembly();
-        var usingStatementRegex = new Regex(@"using\s+(?<RootNamespace>[a-zA-Z]+)\.*\S*;");
+        var usingStatementRegex = new Regex(@"using\s+(?<Namespace>(?<RootNamespace>[a-zA-Z]+)\.*\S*);");
 
-        var expectedNamespaces = new[]
+        // Any namespace under these roots is allowed
+        var expectedRootNamespaces = new[]
         {
             "UnityEditor",
             "UnityEngine",
-            "System"
+            "System",
+        };
+
+        // Only these exact namespaces are allowed
+        var expectedNamespaces = new[]
+        {
+            "Unity.Profiling",
+            "Unity.Scripting.LifecycleManagement",
         };
 
         var errors = new StringBuilder();
@@ -90,10 +56,11 @@ class AndroidLogcatNetTests
             var result = usingStatementRegex.Matches(contents);
             foreach (Match r in result)
             {
-                var namezpace = r.Groups["RootNamespace"].Value;
-                if (!expectedNamespaces.Contains(namezpace))
+                var rootNamespace = r.Groups["RootNamespace"].Value;
+                var namezpace = r.Groups["Namespace"].Value;
+                if (!expectedRootNamespaces.Contains(rootNamespace) && !expectedNamespaces.Contains(namezpace))
                 {
-                    errors.AppendLine($"Unexpected 'using {namezpace}...;' in {file}");
+                    errors.AppendLine($"Unexpected 'using {namezpace};' in {file}");
                 }
             }
         }

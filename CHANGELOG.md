@@ -4,6 +4,25 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-11-18
+### Fixes & Improvements
+ - Unity 6.0 or later is required.
+ - Screenshots are now saved to `AndroidLogcat/Captures` as `<device_id>_<number>.png`. Previously each capture overwrote a single file in the project's `Temp` folder, so earlier screenshots were lost.
+ - The Screen Capture window can be opened from **Window** > **Analysis** > **Android Screen Capture** (Alt+7), as well as from the Android Logcat window's **Tools** menu.
+ - The Screen Capture window now lists every saved screenshot. Click a row or use the Up and Down keys to cycle through them, or the cross next to a row to delete that screenshot.
+ - Ctrl+Shift+S, or Cmd+Shift+S on macOS, captures a screenshot while the Screen Capture window has focus. It appears in Edit > Shortcuts under "Android Logcat" and can be rebound there.
+ - Capturing a screenshot also writes a `.json` file beside it, recording the device it was captured from and when.
+ - The details beside a selected screenshot show the device, its Android version and display size, along with the image size, the file size and when it was captured. The device details read `Undefined` for a screenshot saved without them.
+ - The screenshot and the live view can be zoomed with Ctrl+Wheel (Cmd+Wheel on macOS), and the zoomed image moved with a Ctrl+middle mouse button drag or with the scrollbars that appear.
+ - The device screen can be viewed live from the Screen Capture window: select the "Live" row at the top of the screenshot list. Clicks, drags, the scroll wheel and typing are sent to the device as touch, scroll and key events, and Ctrl+A, Ctrl+C and Ctrl+V (Cmd on macOS) select all, copy and paste on the device using its own clipboard, and Back / Home / Overview buttons sit beside the image with the stream details. 
+ - Screen recordings are now made from the live view, with **Start Recording** in the live view, instead of with `adb screenrecord`. They are saved as constant frame rate MP4 files beside the screenshots, at the live stream's **Max Frame Rate** (up to 60 fps), and follow the live view's rotation. A recording stops on its own after the **Time Limit** set in Preferences (10 minutes by default, up to 60). Recording is not available on Linux.
+ - Recordings can be played in the Screen Capture window, with play/pause, a time slider and buttons that step one frame back or forward.
+ - Tools->Open Terminal is now supported on Linux Editor.
+ - Fixed Tools->Open Terminal not opening a window on Windows Editor when running on CoreCLR.
+ - Added a Commands window, accessible via the Tools menu in the Android Logcat window. It lets you save, organize, search and run adb commands which don't have a dedicated UI in this package, such as package management, permissions, dumpsys, settings and Meta Quest properties. Commands run asynchronously so the Editor stays responsive, support `<placeholder>` substitution with per-token examples and suggestions, and can be imported and exported as JSON. Catalog commands display a description of what they do when you hover over them. Edit Mode supports selecting several commands and deleting them in one step.
+ - Fixed log lines with an empty message not being parsed. They appeared as unformatted text with no tag, process ID or priority, and were hidden when filtering by tag.
+ - Fixed auto scrolling not turning back on after scrolling to the last message when Scroll is set to Auto. It happened only at certain Logcat window heights. (UUM-162014)
+
 ## [1.4.7] - 2025-12-12
 ### Fixes & Improvements
  - Periodic device queries no longer occur when no devices are connected and Logcat window is unfocused.

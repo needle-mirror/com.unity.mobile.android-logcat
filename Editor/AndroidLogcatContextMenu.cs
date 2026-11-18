@@ -28,6 +28,7 @@ namespace Unity.Android.Logcat
         OpenTerminal,
         StacktraceUtility,
         LayoutViewer,
+        Commands,
         WindowMemory,
         WindowInputs,
         WindowHidden
@@ -37,6 +38,17 @@ namespace Unity.Android.Logcat
     {
         UseRegularExpressions,
         MatchCase
+    }
+
+    internal enum ScreenshotContextMenu
+    {
+        None,
+        ShowInFileBrowser,
+        Open,
+        CopyTo,
+        Rename,
+        Delete,
+        SelectAll
     }
 
     class AndroidContextMenu<T>

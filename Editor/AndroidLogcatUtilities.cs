@@ -5,10 +5,12 @@ using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
+using Unity.Scripting.LifecycleManagement;
 using UnityEngine.UIElements;
 
 namespace Unity.Android.Logcat
 {
+    [NoAutoStaticsCleanup]
     internal static class AndroidLogcatUtilities
     {
         internal static readonly string kAbiArm64 = "arm64-v8a";
@@ -72,14 +74,421 @@ namespace Unity.Android.Logcat
 
         public static string GetTemporaryPath(IAndroidLogcatDevice device, string name, string extension)
         {
-            string fileName = device != null ? device.Id : "NoDevice";
-            if (device != null)
-            {
-                foreach (var p in Path.GetInvalidFileNameChars())
-                    fileName = fileName.Replace(p, '_');
-            }
+            string fileName = device != null ? SanitizeFileName(device.Id) : "NoDevice";
             fileName = $"{name}_{fileName}{extension}";
             return Path.Combine(Application.dataPath, "..", "Temp", fileName).Replace("\\", "/");
+        }
+
+        /// <summary>
+        /// Replaces anything the filesystem will not accept in a file name. A device id
+        /// can be an ip:port, and ':' is not allowed on Windows.
+        /// </summary>
+        public static string SanitizeFileName(string name)
+        {
+            foreach (var c in Path.GetInvalidFileNameChars())
+                name = name.Replace(c, '_');
+            return name;
+        }
+
+        /// <summary>
+        /// What the OS calls its file browser, for menu items that reveal a file in it.
+        /// </summary>
+        public static string RevealInFileBrowserLabel
+        {
+            get
+            {
+                switch (Application.platform)
+                {
+                    case RuntimePlatform.OSXEditor: return "Show In Finder";
+                    case RuntimePlatform.LinuxEditor: return "Show In File Manager";
+                    default: return "Show In Explorer";
+                }
+            }
+        }
+
+        /// <summary>Selects a file in the OS file browser, rather than opening it.</summary>
+        public static void RevealInFileBrowser(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                return;
+
+            UnityEditor.EditorUtility.RevealInFinder(path);
+        }
+
+        /// <summary>Opens a file with whatever the OS uses for its type.</summary>
+        public static void OpenFile(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                return;
+
+            UnityEditor.EditorUtility.OpenWithDefaultApp(path);
+        }
+
+        /// <summary>
+        /// Asks where to put a copy of <paramref name="sourcePath"/> and copies it there.
+        /// The extension offered in the dialog comes from the source file, so callers do
+        /// not have to know it.
+        /// </summary>
+        /// <returns>
+        /// The directory saved into, so the caller can remember it, or null if the dialog
+        /// was cancelled or the copy failed. A failure is logged.
+        /// </returns>
+        public static string SaveFileAs(string sourcePath, string title, string startDirectory)
+        {
+            if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
+                return null;
+
+            var extension = Path.GetExtension(sourcePath);
+            var path = UnityEditor.EditorUtility.SaveFilePanel(title, startDirectory,
+                Path.GetFileName(sourcePath),
+                string.IsNullOrEmpty(extension) ? string.Empty : extension.Substring(1));
+            if (string.IsNullOrEmpty(path))
+                return null;
+
+            try
+            {
+                File.Copy(sourcePath, path, true);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogErrorFormat("Failed to save '{0}' as '{1}'.\n{2}", sourcePath, path, ex.Message);
+                return null;
+            }
+
+            // A screenshot's details file goes with the copy. Nothing to do for a
+            // file that has none, which is every video.
+            AndroidLogcatScreenshotInfo.CopyBeside(sourcePath, path);
+
+            return Path.GetFullPath(Path.GetDirectoryName(path));
+        }
+
+        /// <summary>
+        /// Copies a capture into a folder, keeping its name, and takes its details file
+        /// along with it. Overwrites what is there: the caller has already asked.
+        /// </summary>
+        /// <returns>False if the copy failed, which is logged.</returns>
+        public static bool CopyInto(string sourcePath, string directory)
+        {
+            var target = Path.Combine(directory, Path.GetFileName(sourcePath)).Replace("\\", "/");
+            try
+            {
+                File.Copy(sourcePath, target, true);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to copy '{sourcePath}' to '{target}'.\n{ex.Message}");
+                return false;
+            }
+
+            AndroidLogcatScreenshotInfo.CopyBeside(sourcePath, target);
+            return true;
+        }
+
+        /// <summary>
+        /// The folder captures are written to - screenshots today, videos later.
+        /// Settings can point it anywhere: a relative path starts at the project
+        /// folder, an absolute one is where it says. A settings object that is null,
+        /// or holds nothing, is the default described above.
+        /// </summary>
+        public static string GetCapturesDirectory(AndroidLogcatSettings settings = null)
+        {
+            var configured = settings != null ? settings.CaptureOutputDirectory : null;
+            return TryResolveCapturesDirectory(configured, out var resolved)
+                ? resolved
+                : ResolveCapturesDirectory(AndroidLogcatSettings.kDefaultCaptureOutputDirectory);
+        }
+
+        /// <summary>
+        /// Where a configured captures folder resolves to, or false when it resolves
+        /// nowhere. The setting is free text, and this runs from OnGUI.
+        /// </summary>
+        public static bool TryResolveCapturesDirectory(string configured, out string resolved)
+        {
+            if (string.IsNullOrEmpty(configured))
+                configured = AndroidLogcatSettings.kDefaultCaptureOutputDirectory;
+
+            try
+            {
+                resolved = ResolveCapturesDirectory(configured);
+                return true;
+            }
+            catch (Exception)
+            {
+                resolved = null;
+                return false;
+            }
+        }
+
+        static string ResolveCapturesDirectory(string configured)
+        {
+            var path = Path.IsPathRooted(configured)
+                ? configured
+                : Path.Combine(ProjectDirectory(), configured);
+            return Path.GetFullPath(path).Replace("\\", "/");
+        }
+
+        /// <summary>The folder holding Assets, which is what a project path starts at.</summary>
+        public static string ProjectDirectory()
+        {
+            return Path.GetFullPath(Path.Combine(Application.dataPath, "..")).Replace("\\", "/");
+        }
+
+        /// <summary>
+        /// Where the Layout Viewer keeps its screenshot. Its own directory, not the one
+        /// above: that capture belongs to the layout it was queried with and is replaced
+        /// by the next query, so it has no business in the saved screenshot list.
+        /// </summary>
+        public static string GetLayoutViewerDirectory()
+        {
+            return GetCaptureDirectory("LayoutViewer");
+        }
+
+        static string GetCaptureDirectory(string name)
+        {
+            var path = Path.Combine(ProjectDirectory(), "Library", "AndroidLogcat", name);
+            return Path.GetFullPath(path).Replace("\\", "/");
+        }
+
+
+        internal static string ResolvePath(params string[] relativeParts)
+        {
+            var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(
+                typeof(AndroidLogcatUtilities).Assembly);
+            if (package == null)
+                return null;
+
+            var parts = new string[relativeParts.Length + 1];
+            parts[0] = package.resolvedPath;
+            Array.Copy(relativeParts, 0, parts, 1, relativeParts.Length);
+            return Path.GetFullPath(Path.Combine(parts));
+        }
+
+        /// <summary>
+        /// The path with the project folder stripped off, for showing in the UI. A
+        /// screenshot's absolute path is mostly project folder, which in a tooltip is
+        /// wide enough to cover the rows around it.
+        /// </summary>
+        public static string ProjectRelativePath(string path)
+        {
+            return ProjectRelativePath(path, GetProjectDirectory());
+        }
+
+        /// <summary>
+        /// The same, against a given project folder rather than this project's, so that
+        /// it can be exercised with paths from a platform other than the one running.
+        /// </summary>
+        internal static string ProjectRelativePath(string path, string projectDirectory)
+        {
+            if (string.IsNullOrEmpty(path))
+                return path;
+
+            // Trailing slash trimmed so that the separator check below has a separator
+            // to find, whatever shape the folder was handed over in.
+            var project = projectDirectory.Replace("\\", "/").TrimEnd('/');
+            var normalized = path.Replace("\\", "/");
+
+            if (normalized.Length > project.Length + 1
+                && normalized[project.Length] == '/'
+                && normalized.StartsWith(project, StringComparison.OrdinalIgnoreCase))
+                return normalized.Substring(project.Length + 1);
+
+            // Not under the project - a screenshot opened from elsewhere, say - so there
+            // is nothing to strip and the whole path is the most useful thing to show.
+            return normalized;
+        }
+
+        static string s_ProjectDirectory;
+
+        /// <summary>
+        /// The folder that holds Assets, cached: tooltips are built per row per repaint,
+        /// and the project does not move while the Editor is running.
+        /// </summary>
+        static string GetProjectDirectory()
+        {
+            if (s_ProjectDirectory == null)
+                s_ProjectDirectory = Path.GetFullPath(Path.Combine(Application.dataPath, "..")).Replace("\\", "/");
+            return s_ProjectDirectory;
+        }
+
+        // Long enough for a first run, which downloads Gradle itself.
+        const int kGradleTimeoutMs = 5 * 60 * 1000;
+        const int kGradleProgressUpdateMs = 200;
+
+        /// <summary>
+        /// Kills a process and whatever it started. Gradle runs behind a launcher
+        /// script and does its work in a daemon, so killing only the process we started
+        /// leaves the build running.
+        /// </summary>
+        static void KillProcessTree(System.Diagnostics.Process process)
+        {
+            try
+            {
+                if (Application.platform == RuntimePlatform.WindowsEditor)
+                {
+                    var killer = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "taskkill",
+                        Arguments = $"/T /F /PID {process.Id}",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+                    killer?.WaitForExit(5000);
+                    killer?.Dispose();
+                }
+                else
+                {
+                    process.Kill();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"Failed to stop Gradle.\n{ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Runs a Gradle task in a project directory and says whether it succeeded,
+        /// logging its output either way.
+        /// <para>
+        /// The JDK and SDK come from Unity's own External Tools settings rather than
+        /// from the environment: the Editor may not have inherited a shell environment
+        /// at all, the one it did inherit is not necessarily the one this build wants,
+        /// and a user who pointed Unity at their own SDK or JDK means it. The wrapper
+        /// is run through <c>sh</c> off Windows, so that this does not depend on its
+        /// executable bit, which is invisible to anyone working from Windows.
+        /// </para>
+        /// <para>
+        /// Blocking, behind a progress bar. This is a developer action - there is no
+        /// hot path here - and a Gradle build wants the Editor to sit still anyway.
+        /// </para>
+        /// </summary>
+        internal static bool RunGradle(string projectDirectory, string task)
+        {
+            if (string.IsNullOrEmpty(projectDirectory) || !Directory.Exists(projectDirectory))
+            {
+                Debug.LogError($"No Gradle project at '{projectDirectory}'.");
+                return false;
+            }
+
+            string androidHome;
+            string javaHome;
+            try
+            {
+                androidHome = AndroidBridge.AndroidExternalToolsSettings.sdkRootPath;
+                javaHome = AndroidBridge.AndroidExternalToolsSettings.jdkRootPath;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError("Could not read the Android SDK and JDK locations from " +
+                    $"Preferences > External Tools.\n{ex.Message}");
+                return false;
+            }
+
+            var windows = Application.platform == RuntimePlatform.WindowsEditor;
+
+            var process = new System.Diagnostics.Process();
+            var si = process.StartInfo;
+            si.WorkingDirectory = projectDirectory;
+            si.FileName = windows ? Path.Combine(projectDirectory, "gradlew.bat") : "sh";
+            si.Arguments = windows ? task : $"gradlew {task}";
+            // Left unset when a path is not configured, rather than pointed at nothing:
+            // Gradle then falls back to local.properties or an inherited variable, which
+            // is a better answer than a directory that does not exist.
+            if (!string.IsNullOrEmpty(javaHome) && Directory.Exists(javaHome))
+                si.EnvironmentVariables["JAVA_HOME"] = javaHome;
+            if (!string.IsNullOrEmpty(androidHome) && Directory.Exists(androidHome))
+                si.EnvironmentVariables["ANDROID_HOME"] = androidHome;
+            si.UseShellExecute = false;
+            si.CreateNoWindow = true;
+            si.RedirectStandardOutput = true;
+            si.RedirectStandardError = true;
+
+            var output = new System.Text.StringBuilder();
+            // What Gradle said last, which is the only sign of progress it gives while
+            // a build runs.
+            var lastLine = string.Empty;
+
+            try
+            {
+                var title = $"Running Gradle in {Path.GetFileName(projectDirectory)}";
+                var command = $"{si.FileName} {si.Arguments}";
+                EditorUtility.DisplayProgressBar(title, command, 0);
+
+                System.Diagnostics.DataReceivedEventHandler record = (s, e) =>
+                {
+                    if (string.IsNullOrEmpty(e.Data))
+                        return;
+                    // Straight to Editor.log as it arrives: the collected log is only
+                    // reported once the build is over, which is no help while watching
+                    // one that is stuck.
+                    Console.WriteLine(e.Data);
+                    lock (output)
+                    {
+                        output.AppendLine(e.Data);
+                        lastLine = e.Data;
+                    }
+                };
+
+                process.OutputDataReceived += record;
+                process.ErrorDataReceived += record;
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                var started = DateTime.Now;
+                while (!process.WaitForExit(kGradleProgressUpdateMs))
+                {
+                    string message;
+                    lock (output)
+                        message = string.IsNullOrEmpty(lastLine) ? command : lastLine;
+
+                    var elapsed = DateTime.Now - started;
+                    // Gradle reports no progress of its own, so the bar only says the
+                    // build is still alive - it fills over ten seconds and starts over.
+                    var progress = (float)(elapsed.TotalSeconds % 10.0) / 10.0f;
+
+                    if (EditorUtility.DisplayCancelableProgressBar(title, message, progress))
+                    {
+                        KillProcessTree(process);
+                        Debug.LogWarning($"'gradlew {task}' was cancelled.");
+                        return false;
+                    }
+
+                    if (elapsed.TotalMilliseconds >= kGradleTimeoutMs)
+                    {
+                        KillProcessTree(process);
+                        Debug.LogError($"Gradle did not finish within {kGradleTimeoutMs / 1000} s.");
+                        return false;
+                    }
+                }
+
+                // The redirected output is read on other threads, and the wait above
+                // only waits for the process: this one waits for that output too.
+                process.WaitForExit();
+
+                string log;
+                lock (output)
+                    log = output.ToString();
+                AndroidLogcatInternalLog.Log(log);
+
+                if (process.ExitCode != 0)
+                {
+                    Debug.LogError($"'gradlew {task}' failed with exit code {process.ExitCode}.\n{log}");
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"Failed to run Gradle in '{projectDirectory}'.\n{ex.Message}");
+                return false;
+            }
+            finally
+            {
+                process.Dispose();
+                EditorUtility.ClearProgressBar();
+            }
         }
 
         /// <summary>
@@ -310,7 +719,7 @@ namespace Unity.Android.Logcat
             switch (Application.platform)
             {
                 case RuntimePlatform.WindowsEditor:
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe") { WorkingDirectory = workingDirectory });
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe") { UseShellExecute = true, WorkingDirectory = workingDirectory });
                     break;
                 case RuntimePlatform.OSXEditor:
                     var pathsToCheck = new[]
@@ -328,9 +737,137 @@ namespace Unity.Android.Logcat
                     }
 
                     throw new Exception(string.Format("Failed to launch Terminal app, tried following paths:\n{0}", string.Join("\n", pathsToCheck)));
+                case RuntimePlatform.LinuxEditor:
+                    OpenLinuxTerminal(workingDirectory);
+                    break;
                 default:
                     throw new Exception("Don't know how to open terminal on " + Application.platform.ToString());
             }
+        }
+
+        private static void OpenLinuxTerminal(string workingDirectory)
+        {
+            // Terminal command lines, including the arguments used to set the working directory where supported.
+            // Terminals without such arguments inherit the working directory from ProcessStartInfo.
+            // Arguments are passed via ArgumentList, so paths containing spaces or quotes are preserved.
+            var terminals = new List<string[]>();
+
+            var userTerminal = SplitCommandLine(Environment.GetEnvironmentVariable("TERMINAL"));
+            if (userTerminal.Length > 0)
+                terminals.Add(userTerminal);
+
+            terminals.Add(new[] { "x-terminal-emulator" });
+            terminals.Add(new[] { "gnome-terminal", "--working-directory=" + workingDirectory });
+            terminals.Add(new[] { "konsole", "--workdir", workingDirectory });
+            terminals.Add(new[] { "xfce4-terminal", "--working-directory=" + workingDirectory });
+            terminals.Add(new[] { "mate-terminal", "--working-directory=" + workingDirectory });
+            terminals.Add(new[] { "tilix", "--working-directory=" + workingDirectory });
+            terminals.Add(new[] { "alacritty", "--working-directory", workingDirectory });
+            terminals.Add(new[] { "kitty", "--directory", workingDirectory });
+            terminals.Add(new[] { "xterm" });
+
+            foreach (var terminal in terminals)
+            {
+                var path = FindExecutableInPath(terminal[0]);
+                if (path == null)
+                    continue;
+
+                var startInfo = new System.Diagnostics.ProcessStartInfo(path)
+                {
+                    WorkingDirectory = workingDirectory,
+                    UseShellExecute = false
+                };
+                foreach (var arg in terminal.Skip(1))
+                    startInfo.ArgumentList.Add(arg);
+
+                System.Diagnostics.Process.Start(startInfo);
+                return;
+            }
+
+            throw new Exception(string.Format("Failed to launch terminal, tried following terminals:\n{0}", string.Join("\n", terminals.Select(t => t[0]))));
+        }
+
+        /// <summary>
+        /// Splits a command line like 'wezterm start' or '"/opt/my term/bin/term" -e' into executable and arguments, without invoking a shell.
+        /// Supports single quotes, double quotes and backslash escapes.
+        /// </summary>
+        internal static string[] SplitCommandLine(string commandLine)
+        {
+            var result = new List<string>();
+            if (string.IsNullOrEmpty(commandLine))
+                return result.ToArray();
+
+            var current = new System.Text.StringBuilder();
+            var hasToken = false;
+            char quote = '\0';
+            for (int i = 0; i < commandLine.Length; i++)
+            {
+                var c = commandLine[i];
+                if (quote == '\'')
+                {
+                    if (c == '\'')
+                        quote = '\0';
+                    else
+                        current.Append(c);
+                }
+                else if (c == '\\' && i + 1 < commandLine.Length)
+                {
+                    current.Append(commandLine[++i]);
+                    hasToken = true;
+                }
+                else if (quote == '"')
+                {
+                    if (c == '"')
+                        quote = '\0';
+                    else
+                        current.Append(c);
+                }
+                else if (c == '\'' || c == '"')
+                {
+                    quote = c;
+                    hasToken = true;
+                }
+                else if (char.IsWhiteSpace(c))
+                {
+                    if (hasToken)
+                    {
+                        result.Add(current.ToString());
+                        current.Clear();
+                        hasToken = false;
+                    }
+                }
+                else
+                {
+                    current.Append(c);
+                    hasToken = true;
+                }
+            }
+
+            if (hasToken)
+                result.Add(current.ToString());
+
+            return result.ToArray();
+        }
+
+        private static string FindExecutableInPath(string executable)
+        {
+            if (Path.IsPathRooted(executable))
+                return File.Exists(executable) ? executable : null;
+
+            var paths = Environment.GetEnvironmentVariable("PATH");
+            if (string.IsNullOrEmpty(paths))
+                return null;
+
+            foreach (var dir in paths.Split(Path.PathSeparator))
+            {
+                if (string.IsNullOrEmpty(dir))
+                    continue;
+                var fullPath = Path.Combine(dir, executable);
+                if (File.Exists(fullPath))
+                    return fullPath;
+            }
+
+            return null;
         }
 
         public static Version ParseVersionLegacy(string versionString)
@@ -609,7 +1146,9 @@ namespace Unity.Android.Logcat
                 int frame = (int)Mathf.Repeat(Time.realtimeSinceStartup * 10, 11.99f);
                 statusIcon = AndroidLogcatStyles.Status.GetContent(frame);
             }
-            GUILayout.Label(statusIcon, AndroidLogcatStyles.StatusIcon, GUILayout.Width(30));
+            var rect = GUILayoutUtility.GetRect(statusIcon, AndroidLogcatStyles.StatusIcon, GUILayout.Width(30));
+            if (Event.current.type == EventType.Repaint)
+                AndroidLogcatStyles.StatusIcon.Draw(rect, statusIcon, false, false, false, false);
         }
         internal static void DrawRectangle(Rect area, int frameWidth, Color color)
         {

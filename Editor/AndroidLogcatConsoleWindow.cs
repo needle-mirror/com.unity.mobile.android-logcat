@@ -5,9 +5,11 @@ using System.Linq;
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
+using Unity.Scripting.LifecycleManagement;
 
 namespace Unity.Android.Logcat
 {
+    [NoAutoStaticsCleanup]
     internal partial class AndroidLogcatConsoleWindow : EditorWindow, IHasCustomMenu
     {
         private GUIContent kAutoRunText = new GUIContent(L10n.Tr("Auto Run"), L10n.Tr("Automatically launch logcat window during build & run."));
@@ -40,7 +42,7 @@ namespace Unity.Android.Logcat
         private AndroidLogcatInputs m_Inputs;
         private DateTime m_TimeOfLastMemoryRequest;
 
-        private static string kAutoShowLogcatDuringBuildRun = "AutoShowLogcatDuringBuildRun";
+        private const string kAutoShowLogcatDuringBuildRun = "AutoShowLogcatDuringBuildRun";
 
         private ProcessInformation SelectedProcess
         {
@@ -154,7 +156,7 @@ namespace Unity.Android.Logcat
             RestartLogCat();
         }
 
-        private void FilterByProcessId(int processId)
+        internal void FilterByProcessId(int processId)
         {
             var selectedDevice = m_Runtime.DeviceQuery.SelectedDevice;
             var processes = m_Runtime.UserSettings.GetKnownProcesses(selectedDevice);
@@ -338,6 +340,9 @@ namespace Unity.Android.Logcat
                 case ToolsContextMenu.LayoutViewer:
                     AndroidLogcatLayoutViewerWindow.ShowWindow();
                     break;
+                case ToolsContextMenu.Commands:
+                    AndroidLogcatCommandsWindow.ShowWindow();
+                    break;
                 case ToolsContextMenu.WindowMemory:
                     m_Runtime.UserSettings.ExtraWindowState.Type = ExtraWindow.Memory;
                     break;
@@ -363,6 +368,7 @@ namespace Unity.Android.Logcat
                 contextMenu.Add(ToolsContextMenu.StacktraceUtility, "Stacktrace Utility");
                 if (Unsupported.IsDeveloperMode())
                     contextMenu.Add(ToolsContextMenu.LayoutViewer, "Experimental/Layout Viewer");
+                contextMenu.Add(ToolsContextMenu.Commands, "Commands");
                 var b = m_Runtime.UserSettings.ExtraWindowState.Type;
                 contextMenu.Add(ToolsContextMenu.WindowMemory, "Window/Memory", b == ExtraWindow.Memory);
                 contextMenu.Add(ToolsContextMenu.WindowInputs, "Window/Inputs", b == ExtraWindow.Inputs);
@@ -483,6 +489,7 @@ namespace Unity.Android.Logcat
             if (cannotKeepUp)
                 message += " (CAN'T KEEP UP!!!!)";
             GUILayout.Label(message, style);
+            GUILayout.Label($"Window: {position.width:F0}x{position.height:F0}");
             EditorGUILayout.EndHorizontal();
         }
 
